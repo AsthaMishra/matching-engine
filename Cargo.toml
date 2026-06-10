@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "matching-engine",
+    "ouch-gateway",
+    "server",
+]
+resolver = "2"

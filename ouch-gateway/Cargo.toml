@@ -1,0 +1,9 @@
+[package]
+name = "ouch-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.44"
+tokio = { version = "1", features = ["full"] }
+matching-engine = { path = "../matching-engine" }

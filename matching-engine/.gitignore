@@ -1,0 +1,6 @@
+/target
+perf.data
+perf.data.old
+fuzz/target/
+fuzz/artifacts/
+src/perf/flamegraph.svg
