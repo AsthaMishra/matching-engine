@@ -33,9 +33,11 @@ pub async fn run(state: AppState) {
 pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppState) {
     let (mut reader, mut writer) = stream.split();
 
-    let pkt = read_packet(&mut reader).await;
+    let Some(pkt) = read_packet(&mut reader).await else {
+        return;
+    };
 
-    if pkt[0] != b'L' {
+    if pkt.is_empty() || pkt[0] != b'L' {
         login_reject(&mut writer, b'A').await;
         return;
     }
@@ -52,30 +54,50 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
 
     login_accept(&mut writer, &sess).await;
 
-    let mut hb_send = tokio::time::interval(Duration::from_secs(1));
-    let mut hb_timeout = tokio::time::interval(Duration::from_secs(15));
+    // Send a server heartbeat after 1s of outbound silence; if we hear nothing
+    // from the client for 15s, treat the link as dead and drop it.
+    let mut hb_send = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(1),
+        Duration::from_secs(1),
+    );
+    hb_send.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut hb_timeout = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(15),
+        Duration::from_secs(15),
+    );
 
     loop {
         tokio::select! {
             msg = read_packet(&mut reader) => {
-                hb_timeout.reset();
-             let packet_type = msg[0];
-                    match packet_type {
-                        b'A' => {}
-                        _ => {}
-                    };
-            }
-            _ = hb_send.tick() =>{
+                let Some(msg) = msg else {
+                    break; // client disconnected
+                };
+                if msg.is_empty() {
+                    continue;
+                }
+                hb_timeout.reset(); // any inbound packet proves liveness
 
+                match msg[0] {
+                    b'R' => {} // client heartbeat — nothing to do
+                    _ => {}    // order-entry packets: wired up later
+                }
             }
-            _= hb_timeout.tick() => {
-
+            _ = hb_send.tick() => {
+                send_heartbeat(&mut writer).await;
+            }
+            _ = hb_timeout.tick() => {
+                break; // no inbound traffic for 15s
             }
         }
     }
 }
 
-fn send_heartbeat(writer: &mut WriteHalf<'_>) {}
+// Server Heartbeat: 2-byte big-endian length (1) + type 'H', no payload.
+async fn send_heartbeat(writer: &mut WriteHalf<'_>) {
+    let buf = [0u8, 1, b'H'];
+    let _ = writer.write_all(&buf).await;
+}
 
 async fn login_accept(wr: &mut WriteHalf<'_>, sess: &Session) {
     let mut buf = [b' '; 33];
@@ -97,13 +119,13 @@ async fn login_reject(writer: &mut WriteHalf<'_>, reject_code: u8) -> [u8; 4] {
 }
 
 // first 2 bytes - len of one msg
-pub async fn read_packet(s: &mut ReadHalf<'_>) -> Vec<u8> {
+pub async fn read_packet(s: &mut ReadHalf<'_>) -> Option<Vec<u8>> {
     let mut len = [0u8; 2];
-    let _ = s.read_exact(&mut len).await.unwrap();
+    s.read_exact(&mut len).await.ok()?;
 
     let msg_len = u16::from_be_bytes(len) as usize;
 
     let mut msg_buf = vec![0u8; msg_len];
-    let _ = s.read_exact(&mut msg_buf).await.unwrap();
-    msg_buf
+    s.read_exact(&mut msg_buf).await.ok()?;
+    Some(msg_buf)
 }
