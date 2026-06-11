@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::atomic::Ordering, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use matching_engine::AppState;
 use tokio::{
@@ -39,13 +43,14 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     let username: [u8; 6] = pkt[1..7].try_into().unwrap();
     let password: [u8; 10] = pkt[7..17].try_into().unwrap();
 
+    const NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
     let mut sess = Session {
         username,
         session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
         next_seq: 1,
     };
 
-    login_accept(&mut wr, &sess).await;
+    login_accept(&mut writer, &sess).await;
 
     let mut hb_send = tokio::time::interval(Duration::from_secs(1));
     let mut hb_timeout = tokio::time::interval(Duration::from_secs(15));
@@ -66,8 +71,6 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
             _= hb_timeout.tick() => {
 
             }
-
-
         }
     }
 }
@@ -79,10 +82,8 @@ async fn login_accept(wr: &mut WriteHalf<'_>, sess: &Session) {
     let len = (buf.len() - 2) as u16;
     buf[0..2].copy_from_slice(&len.to_be_bytes());
     buf[2] = b'A';
-    // session string: here just the internal id, space-padded
     let s = sess.session_id.to_string();
     buf[3..3 + s.len()].copy_from_slice(s.as_bytes());
-    // next expected sequence number, ASCII, right area...
     wr.write_all(&buf).await.unwrap();
 }
 
