@@ -13,7 +13,7 @@ use tokio::{
     },
 };
 
-use crate::{InBoundResponse, inbound};
+use crate::{InBoundResponse, gateway, inbound};
 
 struct Session {
     username: [u8; 6],
@@ -79,8 +79,13 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                 hb_timeout.reset(); // any inbound packet proves liveness
 
                 match msg[0] {
-                    b'R' => {} // client heartbeat — nothing to do
-                    _ => {}    // order-entry packets: wired up later
+                    b'R' => {} // client heartbeat - nothing to do
+                    b'O' => {} // logout
+                    b'U' => {} // unsequenced packets
+                    b'S' => {
+                        gateway::read(msg, state.clone()).await;
+                    } // sequenced packets
+                    _ => {}    // else
                 }
             }
             _ = hb_send.tick() => {
@@ -96,6 +101,12 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
 // Server Heartbeat: 2-byte big-endian length (1) + type 'H', no payload.
 async fn send_heartbeat(writer: &mut WriteHalf<'_>) {
     let buf = [0u8, 1, b'H'];
+    let _ = writer.write_all(&buf).await;
+}
+
+// End of Session Packe: 2-byte big-endian length (1) + type 'Z', no payload.
+async fn send_eos(writer: &mut WriteHalf<'_>) {
+    let buf = [0u8, 1, b'Z'];
     let _ = writer.write_all(&buf).await;
 }
 

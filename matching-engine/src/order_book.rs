@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BVec;
 
 use crate::{
     INDEX_CAPACITY, MAX_PRICE, ORDER_CAPACITY, TICK_SIZE, price_to_idx,
-    types::{Order, Side},
+    types::{CancelRejectReason, Order, OrderEvent, Side},
 };
 
 #[derive(Clone)]
@@ -63,11 +63,8 @@ impl OrderBook {
     }
 
     // new order , does not exisst yet
-    pub fn place_order(
-        &mut self,
-        order: Order,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let price_idx: usize = price_to_idx(order.price).map_err(|e| e.to_string())?;
+    pub fn place_order(&mut self, order: Order) -> Result<OrderEvent, Box<dyn std::error::Error>> {
+        let price_idx: usize = price_to_idx(order.price)?;
 
         if order.id >= self.order_index.len() {
             // grow to next power of two — amortises realloc cost same way Vec does internally
@@ -131,7 +128,13 @@ impl OrderBook {
             Side::Sell_Short_Exempt => todo!(),
         }
 
-        Ok(())
+        Ok(OrderEvent::Accepted {
+            order_ref: id,
+            side,
+            price: p,
+            qty,
+            remaining_qty: qty,
+        })
     }
 
     //Modify is just cancel + re-place, but with one important rule:
@@ -141,14 +144,18 @@ impl OrderBook {
         &mut self,
         order_id: usize,
         new_qty: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<OrderEvent, Box<dyn std::error::Error>> {
         let Some(&(side, old_price, _old_qty, o_idx)) =
             self.order_index.get(order_id).and_then(|o| o.as_ref())
         else {
-            return Err("OrderId not found".to_string().into());
+            return Ok(OrderEvent::Rejected {
+                order_ref: order_id,
+                reason: CancelRejectReason::OrderIdNotFound,
+            });
+            // return Err("OrderId not found".to_string().into());
         };
 
-        let price_idx = price_to_idx(old_price).map_err(|e| e.to_string())?;
+        let price_idx = price_to_idx(old_price)?;
 
         {
             let pl = match side {
@@ -166,7 +173,11 @@ impl OrderBook {
                     .ok_or("internal: order not found in price level")?;
 
                 if !order.active {
-                    return Err("internal: order is not active in price level".into());
+                    return Ok(OrderEvent::Rejected {
+                        order_ref: order_id,
+                        reason: CancelRejectReason::OrderNotActive,
+                    });
+                    // return Err("internal: order is not active in price level".into());
                 }
 
                 let discard_qty = order
@@ -180,16 +191,29 @@ impl OrderBook {
         }
 
         self.order_index[order_id] = Some((side, old_price, new_qty, o_idx));
-        Ok(())
+        Ok(OrderEvent::Updated {
+            order_ref: order_id,
+            side,
+            price: old_price,
+            qty: new_qty,
+            remaining_qty: new_qty,
+        })
     }
 
-    pub fn cancel_order(&mut self, order_id: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let Some(&(s, p, _q, o_idx)) = self.order_index.get(order_id).and_then(|o| o.as_ref())
+    pub fn cancel_order(
+        &mut self,
+        order_id: usize,
+    ) -> Result<OrderEvent, Box<dyn std::error::Error>> {
+        let Some(&(s, p, q, o_idx)) = self.order_index.get(order_id).and_then(|o| o.as_ref())
         else {
-            return Err("OrderId not found".to_string().into());
+            return Ok(OrderEvent::Rejected {
+                order_ref: order_id,
+                reason: CancelRejectReason::OrderIdNotFound,
+            });
+            // return Err("OrderId not found".to_string().into());
         };
 
-        let price_idx = price_to_idx(p).map_err(|e| e.to_string())?;
+        let price_idx = price_to_idx(p)?;
 
         let level = match s {
             Side::Buy => self.bid.get_mut(price_idx),
@@ -206,7 +230,11 @@ impl OrderBook {
                 .ok_or("internal: order not found in price level")?;
 
             if !order.active {
-                return Err("internal: order is not active in price level".into());
+                return Ok(OrderEvent::Rejected {
+                    order_ref: order_id,
+                    reason: CancelRejectReason::OrderNotActive,
+                });
+                // return Err("internal: order is not active in price level".into());
             }
 
             price_level.total_qty -= order.remaining_qty;
@@ -241,7 +269,11 @@ impl OrderBook {
         // self.order_index.remove(&order_id);
         self.order_index[order_id] = None;
 
-        Ok(())
+        Ok(OrderEvent::Canceled {
+            order_ref: order_id,
+            qty: q,
+            reason: CancelRejectReason::OrderCancelledByUser,
+        })
     }
 
     pub fn best_bid(&self) -> Option<i64> {

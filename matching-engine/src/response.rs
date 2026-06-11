@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::types::Trade;
+use crate::types::{OrderEvent, Trade};
 
 #[derive(Serialize)]
 pub struct Response<T: Serialize> {
@@ -31,7 +31,7 @@ pub struct BboData {
 }
 
 pub enum BookResponse {
-    Trades(Response<Vec<Trade>>),
+    Trades(Response<Vec<OrderEvent>>),
     Cancelled(Response<bool>),
     Bbo(Response<BboData>),
     Depth(Response<Vec<(i64, u64)>>),
@@ -40,7 +40,7 @@ pub enum BookResponse {
 }
 
 impl BookResponse {
-    pub fn trades(data: Vec<Trade>) -> Self {
+    pub fn trades(data: Vec<OrderEvent>) -> Self {
         Self::Trades(Response::ok(data))
     }
     pub fn trades_err() -> Self {

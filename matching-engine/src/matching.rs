@@ -1,5 +1,5 @@
 use crate::price_to_idx;
-use crate::types::OrderType;
+use crate::types::{CancelRejectReason, OrderEvent, OrderType};
 use crate::utils::now_nanos;
 use crate::{
     order_book::OrderBook,
@@ -9,18 +9,34 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRADE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
-    let mut trade: Vec<Trade> = Vec::default();
+pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<OrderEvent> {
+    let mut ord_event: Vec<OrderEvent> = Vec::default();
+
+    match incoming.order_type {
+        OrderType::Limit | OrderType::IOC => {
+            if let Err(e) = price_to_idx(incoming.price) {
+                eprintln!("rejecting order {}: {e}", incoming.id);
+                return vec![OrderEvent::Rejected {
+                    order_ref: incoming.id,
+                    reason: CancelRejectReason::InvalidPrice,
+                }];
+            }
+        }
+        OrderType::Market | OrderType::FOK => {}
+    }
 
     if incoming.order_type == OrderType::FOK && !can_fully_fill(book, &incoming) {
-        return vec![];
+        return vec![OrderEvent::Rejected {
+            order_ref: incoming.id,
+            reason: CancelRejectReason::OrderCannotFullyFill,
+        }];
     }
 
     match incoming.side {
         Side::Buy => {
             // search_idx is a local scan cursor, kept separate from best_ask_idx.
             // When a level is entirely self-trades we advance search_idx past it
-            // without touching best_ask_idx — those resting orders are still the
+            // without touching best_ask_idx - those resting orders are still the
             // real best ask for every other trader.
             let mut search_idx = book.best_ask_idx;
             while incoming.remaining_qty > 0 {
@@ -78,7 +94,7 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
                         idx += 1;
                     }
 
-                    trade.push(Trade {
+                    ord_event.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
                         taker_order_id: incoming.id,
@@ -86,7 +102,7 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
                         qty: fill_qty,
                         side: incoming.side,
                         timestamp: now_nanos(),
-                    });
+                    }));
                 }
 
                 if pl.active_count == 0 {
@@ -96,18 +112,21 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
                     search_idx = book.best_ask_idx;
                 } else if idx == pl.orders.len() {
                     // All active orders at this level belong to the same trader.
-                    // Advance past it — the next level may have other traders.
+                    // Advance past it - the next level may have other traders.
                     search_idx = book.scan_ask_strictly_above(ask_idx);
                 }
             }
 
             if incoming.remaining_qty > 0 {
                 match incoming.order_type {
-                    OrderType::Limit => {
-                        if let Err(e) = book.place_order(incoming) {
+                    OrderType::Limit => match book.place_order(incoming) {
+                        Ok(o) => {
+                            ord_event.push(o);
+                        }
+                        Err(e) => {
                             println!("Error occured while adding order {}", e);
                         }
-                    }
+                    },
                     OrderType::Market | OrderType::IOC | OrderType::FOK => {}
                 }
             }
@@ -168,7 +187,7 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
                         idx += 1;
                     }
 
-                    trade.push(Trade {
+                    ord_event.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
                         taker_order_id: incoming.id,
@@ -176,7 +195,7 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
                         qty: fill_qty,
                         side: incoming.side,
                         timestamp: now_nanos(),
-                    });
+                    }));
                 }
 
                 if pl.active_count == 0 {
@@ -191,11 +210,14 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
 
             if incoming.remaining_qty > 0 {
                 match incoming.order_type {
-                    OrderType::Limit => {
-                        if let Err(e) = book.place_order(incoming) {
-                            println!("Error occurred while adding order {}", e);
+                    OrderType::Limit => match book.place_order(incoming) {
+                        Ok(o) => {
+                            ord_event.push(o);
                         }
-                    }
+                        Err(e) => {
+                            println!("Error occured while adding order {}", e);
+                        }
+                    },
                     OrderType::Market | OrderType::IOC | OrderType::FOK => {}
                 }
             }
@@ -204,7 +226,7 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<Trade> {
         Side::Sell_Short_Exempt => todo!(),
     }
 
-    trade
+    ord_event
 }
 
 fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
@@ -267,7 +289,7 @@ pub fn modify_order(
     order_id: usize,
     new_price: i64,
     new_qty: u64,
-) -> Result<Vec<Trade>, Box<dyn std::error::Error>> {
+) -> Result<Vec<OrderEvent>, Box<dyn std::error::Error>> {
     let Some(&(side, old_price, _old_qty, o_idx)) =
         book.order_index.get(order_id).and_then(|o| o.as_ref())
     else {
@@ -287,7 +309,7 @@ pub fn modify_order(
         return Ok(vec![]);
     };
 
-    // Read actual remaining_qty from the price level — order_index stores the
+    // Read actual remaining_qty from the price level - order_index stores the
     // original qty and is never updated on partial fills, so old_qty is stale.
     let (trader_id, order_type, actual_remaining) = pl
         .orders
@@ -297,8 +319,8 @@ pub fn modify_order(
         .ok_or("order not found or already cancelled")?;
 
     if new_qty == 0 {
-        book.cancel_order(order_id)?;
-        return Ok(vec![]);
+        let res = book.cancel_order(order_id)?;
+        return Ok(vec![res]);
     }
 
     if new_price == old_price && new_qty == actual_remaining {
@@ -306,8 +328,8 @@ pub fn modify_order(
     }
 
     if new_price == old_price && new_qty < actual_remaining {
-        book.update_order(order_id, new_qty)?;
-        return Ok(vec![]);
+        let res = book.update_order(order_id, new_qty)?;
+        return Ok(vec![res]);
     }
 
     // Price changed or qty increased: cancel + rematch
