@@ -138,8 +138,11 @@ pub fn dispatch(req: BookRequest, book: &mut OrderBook, response_txs: &[Sender<B
             )));
         }
         BookRequest::Cancel { order_id, slot_id } => {
-            let _ = response_txs[slot_id]
-                .blocking_send(BookResponse::cancelled(book.cancel_order(order_id).is_ok()));
+            let resp = match book.cancel_order(order_id) {
+                Ok(ord_e) => BookResponse::cancelled(ord_e),
+                Err(_) => BookResponse::trades_err(),
+            };
+            let _ = response_txs[slot_id].blocking_send(resp);
         }
         BookRequest::Modify {
             order_id,

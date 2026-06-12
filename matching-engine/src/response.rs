@@ -32,7 +32,7 @@ pub struct BboData {
 
 pub enum BookResponse {
     Trades(Response<Vec<OrderEvent>>),
-    Cancelled(Response<bool>),
+    Cancelled(Response<OrderEvent>),
     Bbo(Response<BboData>),
     Depth(Response<Vec<(i64, u64)>>),
     Float(Response<Option<f64>>),
@@ -46,12 +46,8 @@ impl BookResponse {
     pub fn trades_err() -> Self {
         Self::Trades(Response::err(vec![]))
     }
-    pub fn cancelled(success: bool) -> Self {
-        Self::Cancelled(if success {
-            Response::ok(true)
-        } else {
-            Response::err(false)
-        })
+    pub fn cancelled(data: OrderEvent) -> Self {
+        Self::Cancelled(Response::ok(data))
     }
     pub fn bbo(bb: Option<i64>, ba: Option<i64>) -> Self {
         Self::Bbo(Response::ok(BboData { bb, ba }))

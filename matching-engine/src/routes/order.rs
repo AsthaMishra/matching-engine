@@ -1,6 +1,6 @@
 use crate::{
     AppState, BookRequest, BookResponse, Response, str_to_symbol,
-    types::{OrderEvent, OrderType, Side, Trade},
+    types::{CancelRejectReason, OrderEvent, OrderType, Side, Trade},
 };
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
@@ -100,18 +100,24 @@ pub struct CancelOrderRequestParams {
 pub async fn cancel_order(
     State(state): State<AppState>,
     Json(req): Json<CancelOrderRequestParams>,
-) -> Json<Response<bool>> {
+) -> Json<Response<OrderEvent>> {
     let Some(id) = state
         .symbol_registery
         .read()
         .unwrap()
         .look_up(str_to_symbol(&req.symbol))
     else {
-        return Json(Response::err(false));
+        return Json(Response::err(OrderEvent::Rejected {
+            order_ref: req.order_id,
+            reason: CancelRejectReason::OrderIdNotFound,
+        }));
     };
 
     let Some(sender) = state.senders.get(&id) else {
-        return Json(Response::err(false));
+        return Json(Response::err(OrderEvent::Rejected {
+            order_ref: req.order_id,
+            reason: CancelRejectReason::OrderIdNotFound,
+        }));
     };
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");

@@ -26,6 +26,12 @@ pub async fn read(buf: Vec<u8>, state: AppState) {
         InBoundResponse::EOE(enable_order_entry) => todo!(),
         InBoundResponse::Query(query_account) => todo!(),
     };
+
+    // match res {
+        
+    // }
+
+  
 }
 
 pub async fn write() {}

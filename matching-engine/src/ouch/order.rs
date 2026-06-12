@@ -1,6 +1,6 @@
 use crate::{
     AppState, BookRequest, BookResponse, Response,
-    types::{OrderEvent, OrderType, Side, Trade},
+    types::{CancelRejectReason, OrderEvent, OrderType, Side, Trade},
 };
 
 pub async fn add_order(
@@ -89,13 +89,19 @@ pub async fn update_order(
     }
 }
 
-pub async fn cancel_order(state: AppState, symbol: [u8; 8], order_id: u32) -> Response<bool> {
+pub async fn cancel_order(state: AppState, symbol: [u8; 8], order_id: u32) -> Response<OrderEvent> {
     let Some(id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
-        return Response::err(false);
+        return Response::err(OrderEvent::Rejected {
+            order_ref: order_id as usize,
+            reason: CancelRejectReason::OrderIdNotFound,
+        });
     };
 
     let Some(sender) = state.senders.get(&id) else {
-        return Response::err(false);
+        return Response::err(OrderEvent::Rejected {
+            order_ref: order_id as usize,
+            reason: CancelRejectReason::OrderIdNotFound,
+        });
     };
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
