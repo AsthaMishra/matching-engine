@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct AddOrderRequestParams {
-    pub trader_id: u32,
+    pub trader_id: u64,
     pub symbol: String,
     pub order_type: OrderType,
     pub side: Side,

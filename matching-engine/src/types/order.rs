@@ -3,7 +3,7 @@ use serde::Deserialize;
 #[derive(Clone)]
 pub struct Order {
     pub id: usize,
-    pub trader_id: u32,
+    pub trader_id: u64,
     pub side: Side,
     pub order_type: OrderType,
     pub price: i64,
@@ -33,7 +33,7 @@ impl Order {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: usize,
-        trader_id: u32,
+        trader_id: u64,
         side: Side,
         order_type: OrderType,
         price: i64,

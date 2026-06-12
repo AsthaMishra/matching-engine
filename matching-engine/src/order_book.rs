@@ -481,7 +481,7 @@ mod tests {
     use super::*;
     use crate::types::{Order, OrderType, Side};
 
-    fn make_bid(id: usize, trader_id: u32, price: i64, qty: u64) -> Order {
+    fn make_bid(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
         Order::new(
             id,
             trader_id,
@@ -494,7 +494,7 @@ mod tests {
         )
     }
 
-    fn make_ask(id: usize, trader_id: u32, price: i64, qty: u64) -> Order {
+    fn make_ask(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
         Order::new(
             id,
             trader_id,

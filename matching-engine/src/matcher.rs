@@ -12,7 +12,7 @@ use crate::{
 
 pub enum BookRequest {
     PlaceOrder {
-        trader_id: u32,
+        trader_id: u64,
         side: Side,
         order_type: OrderType,
         price: i64,

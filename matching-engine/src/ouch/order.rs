@@ -39,7 +39,7 @@ pub async fn add_order(
     };
 
     let _ = sender.send(BookRequest::PlaceOrder {
-        trader_id: trader_id,
+        trader_id: u64::from(trader_id),
         side: s,
         order_type: ord_type,
         price: price as i64,
