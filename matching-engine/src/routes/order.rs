@@ -1,5 +1,6 @@
 use crate::{
-    AppState, BookRequest, BookResponse, Response, str_to_symbol, types::{OrderType, Side, Trade}
+    AppState, BookRequest, BookResponse, Response, str_to_symbol,
+    types::{OrderEvent, OrderType, Side, Trade},
 };
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
@@ -17,14 +18,9 @@ pub struct AddOrderRequestParams {
 pub async fn add_order(
     State(state): State<AppState>,
     Json(req): Json<AddOrderRequestParams>,
-) -> Json<Response<Vec<Trade>>> {
+) -> Json<Response<Vec<OrderEvent>>> {
     let symbol = str_to_symbol(&req.symbol);
-    let Some(symbol_id) = state
-        .symbol_registery
-        .read()
-        .unwrap()
-        .look_up(symbol)
-    else {
+    let Some(symbol_id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
         return Json(Response::err(vec![]));
     };
 
@@ -63,8 +59,13 @@ pub struct UpdateOrderRequestParams {
 pub async fn update_order(
     State(state): State<AppState>,
     Json(req): Json<UpdateOrderRequestParams>,
-) -> Json<Response<Vec<Trade>>> {
-    let Some(id) = state.symbol_registery.read().unwrap().look_up(str_to_symbol(&req.symbol)) else {
+) -> Json<Response<Vec<OrderEvent>>> {
+    let Some(id) = state
+        .symbol_registery
+        .read()
+        .unwrap()
+        .look_up(str_to_symbol(&req.symbol))
+    else {
         return Json(Response::err(vec![]));
     };
 
@@ -100,7 +101,12 @@ pub async fn cancel_order(
     State(state): State<AppState>,
     Json(req): Json<CancelOrderRequestParams>,
 ) -> Json<Response<bool>> {
-    let Some(id) = state.symbol_registery.read().unwrap().look_up(str_to_symbol(&req.symbol)) else {
+    let Some(id) = state
+        .symbol_registery
+        .read()
+        .unwrap()
+        .look_up(str_to_symbol(&req.symbol))
+    else {
         return Json(Response::err(false));
     };
 

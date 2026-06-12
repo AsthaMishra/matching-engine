@@ -35,6 +35,7 @@ impl Trade {
     }
 }
 
+#[derive(Serialize)]
 pub enum OrderEvent {
     Accepted {
         order_ref: usize,
@@ -43,7 +44,14 @@ pub enum OrderEvent {
         qty: u64,
         remaining_qty: u64,
     },
-    Updated {
+    Modified {
+        order_ref: usize,
+        side: Side,
+        price: i64,
+        qty: u64,
+        remaining_qty: u64,
+    },
+    Replace {
         order_ref: usize,
         side: Side,
         price: i64,
@@ -62,6 +70,7 @@ pub enum OrderEvent {
     },
 }
 
+#[derive(Serialize)]
 pub enum CancelRejectReason {
     OrderNotActive,
     OrderIdNotFound,
@@ -80,4 +89,9 @@ impl CancelRejectReason {
             CancelRejectReason::InvalidPrice => 5,
         }
     }
+}
+
+pub enum CommandType {
+    Add,
+    Replace,
 }

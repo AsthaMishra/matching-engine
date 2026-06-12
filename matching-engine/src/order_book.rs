@@ -63,7 +63,10 @@ impl OrderBook {
     }
 
     // new order , does not exisst yet
-    pub fn place_order(&mut self, order: Order) -> Result<OrderEvent, Box<dyn std::error::Error>> {
+    pub fn place_order(
+        &mut self,
+        order: Order,
+    ) -> Result<(usize, Side, i64, u64, u64), Box<dyn std::error::Error>> {
         let price_idx: usize = price_to_idx(order.price)?;
 
         if order.id >= self.order_index.len() {
@@ -128,13 +131,7 @@ impl OrderBook {
             Side::Sell_Short_Exempt => todo!(),
         }
 
-        Ok(OrderEvent::Accepted {
-            order_ref: id,
-            side,
-            price: p,
-            qty,
-            remaining_qty: qty,
-        })
+        Ok((id, side, p, qty, qty))
     }
 
     //Modify is just cancel + re-place, but with one important rule:
@@ -191,7 +188,7 @@ impl OrderBook {
         }
 
         self.order_index[order_id] = Some((side, old_price, new_qty, o_idx));
-        Ok(OrderEvent::Updated {
+        Ok(OrderEvent::Modified {
             order_ref: order_id,
             side,
             price: old_price,

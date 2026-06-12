@@ -1,5 +1,5 @@
 use crate::price_to_idx;
-use crate::types::{CancelRejectReason, OrderEvent, OrderType};
+use crate::types::{CancelRejectReason, CommandType, OrderEvent, OrderType};
 use crate::utils::now_nanos;
 use crate::{
     order_book::OrderBook,
@@ -9,7 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRADE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<OrderEvent> {
+pub fn match_order(
+    book: &mut OrderBook,
+    mut incoming: Order,
+    c_type: CommandType,
+) -> Vec<OrderEvent> {
     let mut ord_event: Vec<OrderEvent> = Vec::default();
 
     match incoming.order_type {
@@ -120,9 +124,22 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<OrderEvent>
             if incoming.remaining_qty > 0 {
                 match incoming.order_type {
                     OrderType::Limit => match book.place_order(incoming) {
-                        Ok(o) => {
-                            ord_event.push(o);
-                        }
+                        Ok((id, side, p, qty, r_qty)) => match c_type {
+                            CommandType::Add => ord_event.push(OrderEvent::Accepted {
+                                order_ref: id,
+                                side,
+                                price: p,
+                                qty,
+                                remaining_qty: r_qty,
+                            }),
+                            CommandType::Replace => ord_event.push(OrderEvent::Replace {
+                                order_ref: id,
+                                side,
+                                price: p,
+                                qty,
+                                remaining_qty: r_qty,
+                            }),
+                        },
                         Err(e) => {
                             println!("Error occured while adding order {}", e);
                         }
@@ -211,9 +228,22 @@ pub fn match_order(book: &mut OrderBook, mut incoming: Order) -> Vec<OrderEvent>
             if incoming.remaining_qty > 0 {
                 match incoming.order_type {
                     OrderType::Limit => match book.place_order(incoming) {
-                        Ok(o) => {
-                            ord_event.push(o);
-                        }
+                        Ok((id, side, p, qty, r_qty)) => match c_type {
+                            CommandType::Add => ord_event.push(OrderEvent::Accepted {
+                                order_ref: id,
+                                side,
+                                price: p,
+                                qty,
+                                remaining_qty: r_qty,
+                            }),
+                            CommandType::Replace => ord_event.push(OrderEvent::Replace {
+                                order_ref: id,
+                                side,
+                                price: p,
+                                qty,
+                                remaining_qty: r_qty,
+                            }),
+                        },
                         Err(e) => {
                             println!("Error occured while adding order {}", e);
                         }
@@ -293,7 +323,10 @@ pub fn modify_order(
     let Some(&(side, old_price, _old_qty, o_idx)) =
         book.order_index.get(order_id).and_then(|o| o.as_ref())
     else {
-        return Ok(vec![]);
+        return Ok(vec![OrderEvent::Rejected {
+            order_ref: order_id,
+            reason: CancelRejectReason::OrderIdNotFound,
+        }]);
     };
 
     let price_idx: usize = price_to_idx(old_price).map_err(|e| e.to_string())?;
@@ -306,17 +339,26 @@ pub fn modify_order(
     .ok_or("internal: price slot out of bounds")?;
 
     let Some(pl) = price_level else {
-        return Ok(vec![]);
+        return Err("internal: order_index points to a removed price level".into());
     };
+
+    let order = pl
+        .orders
+        .get(o_idx)
+        .ok_or("internal: order not found in price level")?;
+
+    if !order.active {
+        return Ok(vec![OrderEvent::Rejected {
+            order_ref: order_id,
+            reason: CancelRejectReason::OrderNotActive,
+        }]);
+        // return Err("internal: order is not active in price level".into());
+    }
 
     // Read actual remaining_qty from the price level - order_index stores the
     // original qty and is never updated on partial fills, so old_qty is stale.
-    let (trader_id, order_type, actual_remaining) = pl
-        .orders
-        .get(o_idx)
-        .filter(|o| o.active)
-        .map(|o| (o.trader_id, o.order_type, o.remaining_qty))
-        .ok_or("order not found or already cancelled")?;
+    let (trader_id, order_type, actual_remaining) =
+        (order.trader_id, order.order_type, order.remaining_qty);
 
     if new_qty == 0 {
         let res = book.cancel_order(order_id)?;
@@ -324,15 +366,43 @@ pub fn modify_order(
     }
 
     if new_price == old_price && new_qty == actual_remaining {
-        return Ok(vec![]);
+        return Ok(vec![OrderEvent::Modified {
+            order_ref: order_id,
+            side,
+            price: old_price,
+            qty: new_qty,
+            remaining_qty: actual_remaining,
+        }]);
     }
 
+    //modified
     if new_price == old_price && new_qty < actual_remaining {
         let res = book.update_order(order_id, new_qty)?;
         return Ok(vec![res]);
     }
 
-    // Price changed or qty increased: cancel + rematch
+    // Price changed or qty increased: cancel + rematch + add new = replace
+    // rule out all possible causes of error to maitain atomicity -> cancel + add new
+    match order_type {
+        OrderType::Limit | OrderType::IOC => {
+            if let Err(e) = price_to_idx(new_price) {
+                eprintln!("rejecting order {}: {e}", order_id);
+                return Ok(vec![OrderEvent::Rejected {
+                    order_ref: order_id,
+                    reason: CancelRejectReason::InvalidPrice,
+                }]);
+            }
+        }
+        OrderType::Market | OrderType::FOK => {}
+    }
+
+    if order_type == OrderType::FOK && !can_fully_fill(book, &order) {
+        return Ok(vec![OrderEvent::Rejected {
+            order_ref: order_id,
+            reason: CancelRejectReason::OrderCannotFullyFill,
+        }]);
+    }
+
     book.cancel_order(order_id)?;
     let new_order = Order::new(
         order_id,
@@ -344,7 +414,9 @@ pub fn modify_order(
         new_qty,
         now_nanos(),
     );
-    Ok(match_order(book, new_order))
+
+    let trades = match_order(book, new_order, CommandType::Replace);
+    Ok(trades)
 }
 
 fn next_trade_id() -> u64 {

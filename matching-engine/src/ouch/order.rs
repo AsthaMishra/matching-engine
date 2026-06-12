@@ -1,6 +1,6 @@
 use crate::{
     AppState, BookRequest, BookResponse, Response,
-    types::{OrderType, Side, Trade},
+    types::{OrderEvent, OrderType, Side, Trade},
 };
 
 pub async fn add_order(
@@ -11,7 +11,7 @@ pub async fn add_order(
     price: u64,
     qty: u32,
     time_in_force: u8,
-) -> Response<Vec<Trade>> {
+) -> Response<Vec<OrderEvent>> {
     let Some(symbol_id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
         return Response::err(vec![]);
     };
@@ -62,7 +62,7 @@ pub async fn update_order(
     order_id: u32,
     price: u64,
     qty: u32,
-) -> Response<Vec<Trade>> {
+) -> Response<Vec<OrderEvent>> {
     let Some(id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
         return Response::err(vec![]);
     };

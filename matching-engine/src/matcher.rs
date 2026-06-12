@@ -7,7 +7,7 @@ use crate::{
     BookResponse, Response, match_order, modify_order, now_nanos,
     order_book::OrderBook,
     response::BboData,
-    types::{Order, OrderType, Side},
+    types::{CommandType, Order, OrderType, Side},
 };
 
 pub enum BookRequest {
@@ -131,8 +131,11 @@ pub fn dispatch(req: BookRequest, book: &mut OrderBook, response_txs: &[Sender<B
                 qty,
                 now_nanos(),
             );
-            let _ =
-                response_txs[slot_id].blocking_send(BookResponse::trades(match_order(book, order)));
+            let _ = response_txs[slot_id].blocking_send(BookResponse::trades(match_order(
+                book,
+                order,
+                CommandType::Add,
+            )));
         }
         BookRequest::Cancel { order_id, slot_id } => {
             let _ = response_txs[slot_id]
