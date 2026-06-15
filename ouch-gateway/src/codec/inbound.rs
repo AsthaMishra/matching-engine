@@ -1,69 +1,7 @@
-pub struct AddOrder {
-    pub user_ref_num: u32,
-    pub side: u8,
-    pub qty: u32,
-    pub symbol: [u8; 8],
-    pub price: u64,
-    pub time_in_force: u8,
-    pub display: char,
-    pub capacity: char,
-    pub inter_market_sweep_eligibility: char,
-    pub cross_type: u8,
-    pub ci_ord_id: String,
-}
-
-pub struct ReplaceOrder {
-    pub org_user_ref_num: u32,
-    pub user_ref_num: u32,
-    pub qty: u32,
-    pub price: u64,
-    pub time_in_force: u8,
-    pub display: char,
-    pub inter_market_sweep_eligibility: char,
-    pub ci_ord_id: String,
-}
-
-pub struct CancelOrder {
-    pub user_ref_num: u32,
-    pub qty: u32,
-}
-
-pub struct ModifyOrder {
-    pub user_ref_num: u32,
-    pub side: u8,
-    pub qty: u32,
-}
-
-pub struct MassCancelOrder {
-    pub user_ref_num: u32,
-    pub firm: [u8; 8],
-    pub symbol: [u8; 8],
-}
-
-pub struct DisableOrderEntry {
-    pub user_ref_num: u32,
-    pub firm: [u8; 8],
-}
-
-pub struct EnableOrderEntry {
-    pub user_ref_num: u32,
-    pub firm: [u8; 8],
-}
-
-pub struct QueryAccount {
-    pub user_ref_idx: Option<u8>,
-}
-
-pub enum InBoundResponse {
-    Enter(AddOrder),
-    Replace(ReplaceOrder),
-    Cancel(CancelOrder),
-    Modify(ModifyOrder),
-    MassCancel(MassCancelOrder),
-    DOE(DisableOrderEntry),
-    EOE(EnableOrderEntry),
-    Query(QueryAccount),
-}
+use crate::{
+    AddOrder, CancelOrder, DisableOrderEntry, EnableOrderEntry, InBoundResponse, MassCancelOrder,
+    ModifyOrder, QueryAccount, ReplaceOrder,
+};
 
 pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
     match buf[0] {
@@ -117,7 +55,8 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             // S	Supplemental
             let cross_type = buf[30];
 
-            let ci_ord_id = str::from_utf8(buf[31..45].try_into().unwrap()).unwrap();
+            // let ci_ord_id = str::from_utf8(buf[31..45].try_into().unwrap()).unwrap();
+            let ci_ord_id = buf[31..45].try_into().unwrap();
             let appendage_length = u16::from_be_bytes(buf[45..47].try_into().unwrap());
             let tag_value_length = buf[47] as usize;
             let tag = buf[48];
@@ -134,7 +73,7 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
                 capacity,
                 inter_market_sweep_eligibility,
                 cross_type,
-                ci_ord_id: ci_ord_id.to_string(),
+                ci_ord_id,
             }))
         }
         //order replace
@@ -147,7 +86,7 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let display = buf[22] as char;
             let inter_market_sweep_eligibility = buf[23] as char;
 
-            let ci_ord_id = str::from_utf8(buf[24..38].try_into().unwrap()).unwrap();
+            let ci_ord_id = buf[24..38].try_into().unwrap();
             let appendage_length = u16::from_be_bytes(buf[38..40].try_into().unwrap());
             let tag_value_length = buf[40] as usize;
             let tag = buf[41];
@@ -161,7 +100,7 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
                 time_in_force,
                 display,
                 inter_market_sweep_eligibility,
-                ci_ord_id: ci_ord_id.to_string(),
+                ci_ord_id,
             }))
         }
         // order cancel

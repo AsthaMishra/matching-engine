@@ -3,7 +3,7 @@ use matching_engine::{
     types::{OrderEvent, OrderType, Side},
 };
 
-use crate::{AddOrder, InBoundResponse, Session, inbound, outbound};
+use crate::{InBoundResponse, OrderHandle, Session, inbound};
 
 pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> {
     let inbound = inbound::parse_enter_order(&buf[1..]).unwrap();
@@ -27,7 +27,22 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                 _ => OrderType::Limit,
             };
 
-            let a_o_r = matching_engine::ouch::add_order(
+            let Some(symbol_id) = state
+                .symbol_registery
+                .read()
+                .unwrap()
+                .look_up(add_order.symbol)
+            else {
+                return res;
+            };
+
+            let Some(sender) = state.senders.get(&symbol_id).cloned() else {
+                unreachable!(
+                    "symbol_id {symbol_id} in registry but no sender — registry/senders desynced"
+                );
+            };
+
+            let o_res = matching_engine::ouch::add_order(
                 state,
                 add_order.symbol,
                 1,
@@ -39,18 +54,82 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             )
             .await;
 
-            let data = a_o_r.data;
+            let data = o_res.data;
 
             for r in data {
-                res.extend_from_slice(&write_ao(&add_order, r));
+                if let OrderEvent::Accepted { id, .. } = &r {
+                    sess.map.insert(
+                        add_order.user_ref_num,
+                        OrderHandle {
+                            sender: sender.clone(), // tokio mpsc Sender is Clone
+                            order_id: *id as usize,
+                            symbol: add_order.symbol,
+                            capacity: add_order.capacity,
+                            cross_type: add_order.cross_type,
+                            ci_ord_id: add_order.ci_ord_id,
+                        },
+                    );
+                }
+                let buf = add_order.write(r);
+                res.extend_from_slice(&buf);
             }
         }
         InBoundResponse::Replace(replace_order) => {
-            // matching_engine::ouch::update_order(state, replace_order.symbol, order_id, price, qty)
-            //     .await
+            let Some(ord_h) = sess.map.get(&replace_order.user_ref_num) else {
+                return res;
+            };
+            let o_res = matching_engine::ouch::update_order(
+                state,
+                ord_h.symbol,
+                ord_h.order_id.try_into().unwrap(),
+                replace_order.price,
+                replace_order.qty,
+            )
+            .await;
+
+            let data = o_res.data;
+
+            for r in data {
+                let buf = replace_order.write(ord_h.symbol, ord_h.capacity, ord_h.cross_type, r);
+                res.extend_from_slice(&buf);
+            }
         }
-        InBoundResponse::Cancel(cancel_order) => todo!(),
-        InBoundResponse::Modify(modify_order) => todo!(),
+        InBoundResponse::Cancel(cancel_order) => {
+            let Some(ord_h) = sess.map.get(&cancel_order.user_ref_num) else {
+                return res;
+            };
+            let o_res = matching_engine::ouch::cancel_order(
+                state,
+                ord_h.symbol,
+                ord_h.order_id.try_into().unwrap(),
+            )
+            .await;
+
+            let r = o_res.data;
+
+            let buf = cancel_order.write(ord_h.ci_ord_id, r);
+            res.extend_from_slice(&buf);
+        }
+        InBoundResponse::Modify(modify_order) => {
+            let Some(ord_h) = sess.map.get(&modify_order.user_ref_num) else {
+                return res;
+            };
+            // let o_res = matching_engine::ouch::update_order(
+            //     state,
+            //     ord_h.symbol,
+            //     ord_h.order_id.try_into().unwrap(),
+            //     modify_order.price,
+            //     modify_order.qty,
+            // )
+            // .await;
+
+            // let data = o_res.data;
+
+            // for r in data {
+            //     let buf = modify_order.write(ord_h.symbol, ord_h.capacity, ord_h.cross_type, r);
+            //     res.extend_from_slice(&buf);
+            // }
+        }
         InBoundResponse::MassCancel(mass_cancel_order) => todo!(),
         InBoundResponse::DOE(disable_order_entry) => todo!(),
         InBoundResponse::EOE(enable_order_entry) => todo!(),
@@ -60,117 +139,6 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
     // let res_data = res.data;
 
     // for ord_e in res_data {}
-
-    res
-}
-
-pub fn write_ao(ord: &AddOrder, ord_e: OrderEvent) -> Vec<u8> {
-    let mut res: Vec<u8> = vec![];
-
-    match ord_e {
-        OrderEvent::Accepted {
-            id,
-            side,
-            price,
-            qty,
-            remaining_qty,
-        } => {
-            let s = match side {
-                Side::Buy => b'B',
-                Side::Sell => b'S',
-                Side::Sell_Short => b'T',
-                Side::Sell_Short_Exempt => b'E',
-            };
-
-            let o = outbound::order_accepted(
-                ord.user_ref_num,
-                s,
-                qty as u32,
-                ord.symbol,
-                price as u64,
-                ord.time_in_force,
-                ord.time_in_force,
-                id as u64,
-                ord.capacity as u8,
-                ord.inter_market_sweep_eligibility as u8,
-                ord.cross_type,
-                0u8,
-                ord.ci_ord_id.as_str(),
-            );
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::Modified {
-            id,
-            side,
-            price,
-            qty,
-            remaining_qty,
-        } => {
-            let s = match side {
-                Side::Buy => b'B',
-                Side::Sell => b'S',
-                Side::Sell_Short => b'T',
-                Side::Sell_Short_Exempt => b'E',
-            };
-            let o = outbound::order_modified(ord.user_ref_num, s, qty as u32);
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::Replace {
-            id,
-            side,
-            price,
-            qty,
-            remaining_qty,
-        } => {
-            let s = match side {
-                Side::Buy => b'B',
-                Side::Sell => b'S',
-                Side::Sell_Short => b'T',
-                Side::Sell_Short_Exempt => b'E',
-            };
-            let o = outbound::order_replaced(
-                ord.user_ref_num,
-                ord.user_ref_num,
-                s,
-                qty as u32,
-                ord.symbol,
-                price as u64,
-                ord.time_in_force,
-                ord.time_in_force,
-                id as u64,
-                ord.capacity as u8,
-                ord.inter_market_sweep_eligibility as u8,
-                ord.cross_type,
-                0u8,
-                ord.ci_ord_id.as_str(),
-            );
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::Executed(trade) => {
-            let o = outbound::order_executed(
-                ord.user_ref_num,
-                trade.qty as u32,
-                trade.price as u64,
-                0,
-                trade.id,
-            );
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::Canceled { id, qty, reason } => {
-            let o = outbound::order_canceled(ord.user_ref_num, ord.qty as u32, reason.code());
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::Rejected { id, reason } => {
-            let o =
-                outbound::order_rejected(ord.user_ref_num, reason.code() as u16, &ord.ci_ord_id);
-            res.extend_from_slice(&o);
-        }
-        OrderEvent::UnknownSymbol { reason } => {
-            let o =
-                outbound::order_rejected(ord.user_ref_num, reason.code() as u16, &ord.ci_ord_id);
-            res.extend_from_slice(&o);
-        }
-    }
 
     res
 }

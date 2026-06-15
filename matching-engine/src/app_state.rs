@@ -9,9 +9,14 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::{BookRequest, BookResponse, Exchange, SymbolRegistry};
 
+/// The (synchronous, crossbeam) sender used to submit requests to a book.
+/// Re-exported so downstream crates can name this type without depending on
+/// crossbeam directly — and without risking a version-skew "distinct types" error.
+pub type BookSender = Sender<BookRequest>;
+
 #[derive(Clone)]
 pub struct AppState {
-    pub senders: Arc<HashMap<u32, Sender<BookRequest>>>,
+    pub senders: Arc<HashMap<u32, BookSender>>,
     pub symbol_registery: Arc<RwLock<SymbolRegistry>>,
     pub slot_pool: Arc<ArrayQueue<(usize, Receiver<BookResponse>)>>,
 }

@@ -34,7 +34,7 @@ pub fn order_accepted(
     inter_market_sweep_eligibility: u8,
     cross_type: u8,
     ord_state: u8,
-    ci_ord_id: &str,
+    ci_ord_id: [u8; 14],
 ) -> [u8; 64] {
     let mut buf = [0u8; 64];
     buf[0] = b'A';
@@ -51,7 +51,7 @@ pub fn order_accepted(
     buf[45] = inter_market_sweep_eligibility;
     buf[46] = cross_type;
     buf[47] = ord_state;
-    buf[48..62].copy_from_slice(ci_ord_id.as_bytes());
+    buf[48..62].copy_from_slice(&ci_ord_id);
     buf[62..64].copy_from_slice(&0u16.to_be_bytes());
     buf
 }
@@ -71,7 +71,7 @@ pub fn order_replaced(
     inter_market_sweep_eligibility: u8,
     cross_type: u8,
     ord_state: u8,
-    ci_ord_id: &str,
+    ci_ord_id: [u8; 14],
 ) -> [u8; 68] {
     let mut buf = [0u8; 68];
     buf[0] = b'U';
@@ -89,7 +89,7 @@ pub fn order_replaced(
     buf[49] = inter_market_sweep_eligibility;
     buf[50] = cross_type;
     buf[51] = ord_state;
-    buf[52..66].copy_from_slice(ci_ord_id.as_bytes());
+    buf[52..66].copy_from_slice(&ci_ord_id);
     buf[66..68].copy_from_slice(&0u16.to_be_bytes());
     buf
 }
@@ -151,26 +151,26 @@ pub fn order_executed(
 }
 
 // Type B – Broken Trade (38 bytes)
-pub fn broken_trade(user_ref: u32, match_number: u64, reason: u8, ci_ord_id: &str) -> [u8; 38] {
+pub fn broken_trade(user_ref: u32, match_number: u64, reason: u8, ci_ord_id: [u8; 14]) -> [u8; 38] {
     let mut buf = [0u8; 38];
     buf[0] = b'B';
     buf[1..9].copy_from_slice(&nano_since_midnight().to_be_bytes());
     buf[9..13].copy_from_slice(&user_ref.to_be_bytes());
     buf[13..21].copy_from_slice(&match_number.to_be_bytes());
     buf[21] = reason;
-    buf[22..36].copy_from_slice(ci_ord_id.as_bytes());
+    buf[22..36].copy_from_slice(&ci_ord_id);
     buf[36..38].copy_from_slice(&0u16.to_be_bytes());
     buf
 }
 
 // Type J – Rejected (31 bytes)
-pub fn order_rejected(user_ref: u32, reason: u16, ci_ord_id: &str) -> [u8; 31] {
+pub fn order_rejected(user_ref: u32, reason: u16, ci_ord_id: [u8; 14]) -> [u8; 31] {
     let mut buf = [0u8; 31];
     buf[0] = b'J';
     buf[1..9].copy_from_slice(&nano_since_midnight().to_be_bytes());
     buf[9..13].copy_from_slice(&user_ref.to_be_bytes());
     buf[13..15].copy_from_slice(&reason.to_be_bytes());
-    buf[15..29].copy_from_slice(ci_ord_id.as_bytes());
+    buf[15..29].copy_from_slice(&ci_ord_id);
     buf[29..31].copy_from_slice(&0u16.to_be_bytes());
     buf
 }

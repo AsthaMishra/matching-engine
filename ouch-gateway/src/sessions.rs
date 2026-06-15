@@ -5,28 +5,31 @@ use std::{
     time::Duration,
 };
 
-use matching_engine::{AppState, BookRequest};
+use matching_engine::{AppState, BookSender};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         TcpListener, TcpStream,
         tcp::{ReadHalf, WriteHalf},
     },
-    sync::mpsc::Sender,
 };
 
 use crate::{InBoundResponse, gateway, inbound};
 
 pub struct OrderHandle {
-    pub sender: Sender<BookRequest>,
-    pub engine_order_id: usize,
+    pub sender: BookSender,
+    pub order_id: usize,
+    pub symbol: [u8; 8],
+    pub capacity: char,
+    pub cross_type: u8,
+    pub ci_ord_id: [u8; 14],
 }
 
 pub struct Session {
     pub username: [u8; 6],
     pub session_id: u64, // internal handle
     pub next_seq: u64,
-    pub map: HashMap<u32, OrderHandle>, // user_ref_num -> engine order handle
+    pub map: HashMap<u32, OrderHandle>, // user_ref_num -> detail
 }
 
 pub async fn run(state: AppState) {
