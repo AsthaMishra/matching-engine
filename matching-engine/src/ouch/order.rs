@@ -7,40 +7,27 @@ pub async fn add_order(
     state: AppState,
     symbol: [u8; 8],
     trader_id: u32,
-    side: u8,
+    side: Side,
     price: u64,
     qty: u32,
+    ord_type: OrderType,
     time_in_force: u8,
 ) -> Response<Vec<OrderEvent>> {
     let Some(symbol_id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
-        return Response::err(vec![]);
+        return Response::err(vec![OrderEvent::UnknownSymbol {
+            reason: CancelRejectReason::UnknownSymbol,
+        }]);
     };
 
     let Some(sender) = state.senders.get(&symbol_id) else {
-        return Response::err(vec![]);
+        unreachable!("symbol_id {symbol_id} in registry but no sender — registry/senders desynced");
     };
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
 
-    let s: Side = match side {
-        b'B' => Side::Buy,
-        b'S' => Side::Sell,
-        b'T' => Side::Sell_Short,
-        b'E' => Side::Sell_Short_Exempt,
-        _ => Side::Buy,
-    };
-
-    let ord_type = match time_in_force {
-        b'0' => OrderType::Limit,
-        b'3' => OrderType::IOC,
-        b'5' => OrderType::FOK,
-        b'6' => OrderType::Market,
-        _ => OrderType::Limit,
-    };
-
     let _ = sender.send(BookRequest::PlaceOrder {
         trader_id: u64::from(trader_id),
-        side: s,
+        side,
         order_type: ord_type,
         price: price as i64,
         qty: u64::from(qty),
@@ -64,11 +51,13 @@ pub async fn update_order(
     qty: u32,
 ) -> Response<Vec<OrderEvent>> {
     let Some(id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
-        return Response::err(vec![]);
+        return Response::err(vec![OrderEvent::UnknownSymbol {
+            reason: CancelRejectReason::UnknownSymbol,
+        }]);
     };
 
     let Some(sender) = state.senders.get(&id) else {
-        return Response::err(vec![]);
+        unreachable!("symbol_id {id} in registry but no sender — registry/senders desynced");
     };
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
@@ -91,17 +80,13 @@ pub async fn update_order(
 
 pub async fn cancel_order(state: AppState, symbol: [u8; 8], order_id: u32) -> Response<OrderEvent> {
     let Some(id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
-        return Response::err(OrderEvent::Rejected {
-            order_ref: order_id as usize,
-            reason: CancelRejectReason::OrderIdNotFound,
+        return Response::err(OrderEvent::UnknownSymbol {
+            reason: CancelRejectReason::UnknownSymbol,
         });
     };
 
     let Some(sender) = state.senders.get(&id) else {
-        return Response::err(OrderEvent::Rejected {
-            order_ref: order_id as usize,
-            reason: CancelRejectReason::OrderIdNotFound,
-        });
+        unreachable!("symbol_id {id} in registry but no sender — registry/senders desynced")
     };
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");

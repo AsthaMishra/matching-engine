@@ -1,24 +1,32 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
-use matching_engine::AppState;
+use matching_engine::{AppState, BookRequest};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         TcpListener, TcpStream,
         tcp::{ReadHalf, WriteHalf},
     },
+    sync::mpsc::Sender,
 };
 
 use crate::{InBoundResponse, gateway, inbound};
 
-struct Session {
-    username: [u8; 6],
-    session_id: u64, // internal handle
-    next_seq: u64,
+pub struct OrderHandle {
+    pub sender: Sender<BookRequest>,
+    pub engine_order_id: usize,
+}
+
+pub struct Session {
+    pub username: [u8; 6],
+    pub session_id: u64, // internal handle
+    pub next_seq: u64,
+    pub map: HashMap<u32, OrderHandle>, // user_ref_num -> engine order handle
 }
 
 pub async fn run(state: AppState) {
@@ -43,13 +51,16 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     }
 
     let username: [u8; 6] = pkt[1..7].try_into().unwrap();
+
+    // not using it as i am not implementing authentication for this
     let password: [u8; 10] = pkt[7..17].try_into().unwrap();
 
-    const NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+    static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
     let mut sess = Session {
         username,
         session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
         next_seq: 1,
+        map: HashMap::new(),
     };
 
     login_accept(&mut writer, &sess).await;
@@ -83,7 +94,7 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                     b'O' => {} // logout
                     b'U' => {} // unsequenced packets
                     b'S' => {
-                        gateway::read(msg, state.clone()).await;
+                        gateway::read(msg, state.clone(), &mut sess).await;
                     } // sequenced packets
                     _ => {}    // else
                 }

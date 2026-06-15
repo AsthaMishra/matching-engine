@@ -146,7 +146,7 @@ impl OrderBook {
             self.order_index.get(order_id).and_then(|o| o.as_ref())
         else {
             return Ok(OrderEvent::Rejected {
-                order_ref: order_id,
+                id: order_id,
                 reason: CancelRejectReason::OrderIdNotFound,
             });
             // return Err("OrderId not found".to_string().into());
@@ -171,7 +171,7 @@ impl OrderBook {
 
                 if !order.active {
                     return Ok(OrderEvent::Rejected {
-                        order_ref: order_id,
+                        id: order_id,
                         reason: CancelRejectReason::OrderNotActive,
                     });
                     // return Err("internal: order is not active in price level".into());
@@ -189,7 +189,7 @@ impl OrderBook {
 
         self.order_index[order_id] = Some((side, old_price, new_qty, o_idx));
         Ok(OrderEvent::Modified {
-            order_ref: order_id,
+            id: order_id,
             side,
             price: old_price,
             qty: new_qty,
@@ -204,7 +204,7 @@ impl OrderBook {
         let Some(&(s, p, q, o_idx)) = self.order_index.get(order_id).and_then(|o| o.as_ref())
         else {
             return Ok(OrderEvent::Rejected {
-                order_ref: order_id,
+                id: order_id,
                 reason: CancelRejectReason::OrderIdNotFound,
             });
             // return Err("OrderId not found".to_string().into());
@@ -228,7 +228,7 @@ impl OrderBook {
 
             if !order.active {
                 return Ok(OrderEvent::Rejected {
-                    order_ref: order_id,
+                    id: order_id,
                     reason: CancelRejectReason::OrderNotActive,
                 });
                 // return Err("internal: order is not active in price level".into());
@@ -267,7 +267,7 @@ impl OrderBook {
         self.order_index[order_id] = None;
 
         Ok(OrderEvent::Canceled {
-            order_ref: order_id,
+            id: order_id,
             qty: q,
             reason: CancelRejectReason::OrderCancelledByUser,
         })

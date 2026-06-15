@@ -21,7 +21,7 @@ pub fn match_order(
             if let Err(e) = price_to_idx(incoming.price) {
                 eprintln!("rejecting order {}: {e}", incoming.id);
                 return vec![OrderEvent::Rejected {
-                    order_ref: incoming.id,
+                    id: incoming.id,
                     reason: CancelRejectReason::InvalidPrice,
                 }];
             }
@@ -31,7 +31,7 @@ pub fn match_order(
 
     if incoming.order_type == OrderType::FOK && !can_fully_fill(book, &incoming) {
         return vec![OrderEvent::Rejected {
-            order_ref: incoming.id,
+            id: incoming.id,
             reason: CancelRejectReason::OrderCannotFullyFill,
         }];
     }
@@ -126,14 +126,14 @@ pub fn match_order(
                     OrderType::Limit => match book.place_order(incoming) {
                         Ok((id, side, p, qty, r_qty)) => match c_type {
                             CommandType::Add => ord_event.push(OrderEvent::Accepted {
-                                order_ref: id,
+                                id,
                                 side,
                                 price: p,
                                 qty,
                                 remaining_qty: r_qty,
                             }),
                             CommandType::Replace => ord_event.push(OrderEvent::Replace {
-                                order_ref: id,
+                                id,
                                 side,
                                 price: p,
                                 qty,
@@ -230,14 +230,14 @@ pub fn match_order(
                     OrderType::Limit => match book.place_order(incoming) {
                         Ok((id, side, p, qty, r_qty)) => match c_type {
                             CommandType::Add => ord_event.push(OrderEvent::Accepted {
-                                order_ref: id,
+                                id,
                                 side,
                                 price: p,
                                 qty,
                                 remaining_qty: r_qty,
                             }),
                             CommandType::Replace => ord_event.push(OrderEvent::Replace {
-                                order_ref: id,
+                                id,
                                 side,
                                 price: p,
                                 qty,
@@ -324,7 +324,7 @@ pub fn modify_order(
         book.order_index.get(order_id).and_then(|o| o.as_ref())
     else {
         return Ok(vec![OrderEvent::Rejected {
-            order_ref: order_id,
+            id: order_id,
             reason: CancelRejectReason::OrderIdNotFound,
         }]);
     };
@@ -349,7 +349,7 @@ pub fn modify_order(
 
     if !order.active {
         return Ok(vec![OrderEvent::Rejected {
-            order_ref: order_id,
+            id: order_id,
             reason: CancelRejectReason::OrderNotActive,
         }]);
         // return Err("internal: order is not active in price level".into());
@@ -367,7 +367,7 @@ pub fn modify_order(
 
     if new_price == old_price && new_qty == actual_remaining {
         return Ok(vec![OrderEvent::Modified {
-            order_ref: order_id,
+            id: order_id,
             side,
             price: old_price,
             qty: new_qty,
@@ -388,7 +388,7 @@ pub fn modify_order(
             if let Err(e) = price_to_idx(new_price) {
                 eprintln!("rejecting order {}: {e}", order_id);
                 return Ok(vec![OrderEvent::Rejected {
-                    order_ref: order_id,
+                    id: order_id,
                     reason: CancelRejectReason::InvalidPrice,
                 }]);
             }
@@ -398,7 +398,7 @@ pub fn modify_order(
 
     if order_type == OrderType::FOK && !can_fully_fill(book, &order) {
         return Ok(vec![OrderEvent::Rejected {
-            order_ref: order_id,
+            id: order_id,
             reason: CancelRejectReason::OrderCannotFullyFill,
         }]);
     }

@@ -5,6 +5,11 @@ pub struct AddOrder {
     pub symbol: [u8; 8],
     pub price: u64,
     pub time_in_force: u8,
+    pub display: char,
+    pub capacity: char,
+    pub inter_market_sweep_eligibility: char,
+    pub cross_type: u8,
+    pub ci_ord_id: String,
 }
 
 pub struct ReplaceOrder {
@@ -12,6 +17,10 @@ pub struct ReplaceOrder {
     pub user_ref_num: u32,
     pub qty: u32,
     pub price: u64,
+    pub time_in_force: u8,
+    pub display: char,
+    pub inter_market_sweep_eligibility: char,
+    pub ci_ord_id: String,
 }
 
 pub struct CancelOrder {
@@ -108,7 +117,7 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             // S	Supplemental
             let cross_type = buf[30];
 
-            let ci_ord_id = str::from_utf8(buf[31..45].try_into().unwrap());
+            let ci_ord_id = str::from_utf8(buf[31..45].try_into().unwrap()).unwrap();
             let appendage_length = u16::from_be_bytes(buf[45..47].try_into().unwrap());
             let tag_value_length = buf[47] as usize;
             let tag = buf[48];
@@ -121,6 +130,11 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
                 symbol,
                 price,
                 time_in_force,
+                display,
+                capacity,
+                inter_market_sweep_eligibility,
+                cross_type,
+                ci_ord_id: ci_ord_id.to_string(),
             }))
         }
         //order replace
@@ -133,7 +147,7 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let display = buf[22] as char;
             let inter_market_sweep_eligibility = buf[23] as char;
 
-            let ci_ord_id = str::from_utf8(buf[24..38].try_into().unwrap());
+            let ci_ord_id = str::from_utf8(buf[24..38].try_into().unwrap()).unwrap();
             let appendage_length = u16::from_be_bytes(buf[38..40].try_into().unwrap());
             let tag_value_length = buf[40] as usize;
             let tag = buf[41];
@@ -144,6 +158,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
                 user_ref_num,
                 qty,
                 price,
+                time_in_force,
+                display,
+                inter_market_sweep_eligibility,
+                ci_ord_id: ci_ord_id.to_string(),
             }))
         }
         // order cancel

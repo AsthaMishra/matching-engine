@@ -108,14 +108,14 @@ pub async fn cancel_order(
         .look_up(str_to_symbol(&req.symbol))
     else {
         return Json(Response::err(OrderEvent::Rejected {
-            order_ref: req.order_id,
+            id: req.order_id,
             reason: CancelRejectReason::OrderIdNotFound,
         }));
     };
 
     let Some(sender) = state.senders.get(&id) else {
         return Json(Response::err(OrderEvent::Rejected {
-            order_ref: req.order_id,
+            id: req.order_id,
             reason: CancelRejectReason::OrderIdNotFound,
         }));
     };

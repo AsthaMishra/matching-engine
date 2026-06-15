@@ -38,21 +38,21 @@ impl Trade {
 #[derive(Serialize)]
 pub enum OrderEvent {
     Accepted {
-        order_ref: usize,
+        id: usize,
         side: Side,
         price: i64,
         qty: u64,
         remaining_qty: u64,
     },
     Modified {
-        order_ref: usize,
+        id: usize,
         side: Side,
         price: i64,
         qty: u64,
         remaining_qty: u64,
     },
     Replace {
-        order_ref: usize,
+        id: usize,
         side: Side,
         price: i64,
         qty: u64,
@@ -60,12 +60,15 @@ pub enum OrderEvent {
     },
     Executed(Trade),
     Canceled {
-        order_ref: usize,
+        id: usize,
         qty: u64,
         reason: CancelRejectReason,
     },
     Rejected {
-        order_ref: usize,
+        id: usize,
+        reason: CancelRejectReason,
+    },
+    UnknownSymbol {
         reason: CancelRejectReason,
     },
 }
@@ -77,6 +80,7 @@ pub enum CancelRejectReason {
     OrderCancelledByUser,
     OrderCannotFullyFill,
     InvalidPrice,
+    UnknownSymbol,
 }
 
 impl CancelRejectReason {
@@ -87,6 +91,7 @@ impl CancelRejectReason {
             CancelRejectReason::OrderCancelledByUser => 3,
             CancelRejectReason::OrderCannotFullyFill => 4,
             CancelRejectReason::InvalidPrice => 5,
+            CancelRejectReason::UnknownSymbol => 6,
         }
     }
 }

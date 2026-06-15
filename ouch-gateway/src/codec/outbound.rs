@@ -25,7 +25,7 @@ pub fn order_accepted(
     user_ref: u32,
     side: u8,
     qty: u32,
-    symbol: &str,
+    symbol: [u8; 8],
     price: u64,
     time_in_force: u8,
     display: u8,
@@ -42,7 +42,7 @@ pub fn order_accepted(
     buf[9..13].copy_from_slice(&user_ref.to_be_bytes());
     buf[13] = side;
     buf[14..18].copy_from_slice(&qty.to_be_bytes());
-    buf[18..26].copy_from_slice(symbol.as_bytes());
+    buf[18..26].copy_from_slice(&symbol);
     buf[26..34].copy_from_slice(&price.to_be_bytes());
     buf[34] = time_in_force;
     buf[35] = display;
@@ -62,7 +62,7 @@ pub fn order_replaced(
     user_ref: u32,
     side: u8,
     qty: u32,
-    symbol: &str,
+    symbol: [u8; 8],
     price: u64,
     time_in_force: u8,
     display: u8,
@@ -80,7 +80,7 @@ pub fn order_replaced(
     buf[13..17].copy_from_slice(&user_ref.to_be_bytes());
     buf[17] = side;
     buf[18..22].copy_from_slice(&qty.to_be_bytes());
-    buf[22..30].copy_from_slice(symbol.as_bytes());
+    buf[22..30].copy_from_slice(&symbol);
     buf[30..38].copy_from_slice(&price.to_be_bytes());
     buf[38] = time_in_force;
     buf[39] = display;
