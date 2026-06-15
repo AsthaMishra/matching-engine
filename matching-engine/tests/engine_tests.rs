@@ -1,5 +1,6 @@
 use matching_engine::{
-    match_order, modify_order,
+    match_order,
+    matching::replace_order,
     order_book::OrderBook,
     types::{CancelRejectReason, CommandType, Order, OrderEvent, OrderType, Side, Trade},
 };
@@ -20,7 +21,7 @@ fn match_trades(book: &mut OrderBook, order: Order) -> Vec<Trade> {
 
 // Same idea for modify: keep only the executions triggered by the modify.
 fn modify_trades(book: &mut OrderBook, id: usize, price: i64, qty: u64) -> Vec<Trade> {
-    modify_order(book, id, price, qty)
+    replace_order(book, id, price, qty)
         .unwrap()
         .into_iter()
         .filter_map(|e| match e {
@@ -504,7 +505,7 @@ fn modify_price_change_moves_order_to_new_level() {
     let mut book = OrderBook::new();
     let id = rest_bid(&mut book, 1, 100, 10);
 
-    modify_order(&mut book, id, 98, 10).unwrap();
+    replace_order(&mut book, id, 98, 10).unwrap();
 
     assert!(book.volume_at_price(Side::Buy, 100).is_none()); // old level gone
     assert_eq!(book.volume_at_price(Side::Buy, 98), Some(10)); // new level exists
@@ -516,7 +517,7 @@ fn modify_to_zero_qty_cancels_order() {
     let mut book = OrderBook::new();
     let id = rest_bid(&mut book, 1, 100, 10);
 
-    modify_order(&mut book, id, 100, 0).unwrap();
+    replace_order(&mut book, id, 100, 0).unwrap();
 
     assert!(book.volume_at_price(Side::Buy, 100).is_none());
     assert!(book.best_bid().is_none());

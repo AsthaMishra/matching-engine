@@ -43,7 +43,7 @@ pub async fn add_order(
     }
 }
 
-pub async fn update_order(
+pub async fn replace_order(
     state: AppState,
     symbol: [u8; 8],
     order_id: u32,
@@ -62,10 +62,43 @@ pub async fn update_order(
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
 
-    let _ = sender.send(BookRequest::Modify {
+    let _ = sender.send(BookRequest::Replace {
         slot_id,
         order_id: order_id as usize,
         price: price as i64,
+        qty: qty as u64,
+    });
+
+    let resp = rx.recv().await.unwrap();
+    state.slot_pool.push((slot_id, rx)).unwrap();
+
+    match resp {
+        BookResponse::Trades(r) => r,
+        _ => unreachable!(),
+    }
+}
+
+pub async fn modify_order(
+    state: AppState,
+    symbol: [u8; 8],
+    order_id: u32,
+    qty: u32,
+) -> Response<Vec<OrderEvent>> {
+    let Some(id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
+        return Response::err(vec![OrderEvent::UnknownSymbol {
+            reason: CancelRejectReason::UnknownSymbol,
+        }]);
+    };
+
+    let Some(sender) = state.senders.get(&id) else {
+        unreachable!("symbol_id {id} in registry but no sender — registry/senders desynced");
+    };
+
+    let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
+
+    let _ = sender.send(BookRequest::Modify {
+        slot_id,
+        order_id: order_id as usize,
         qty: qty as u64,
     });
 

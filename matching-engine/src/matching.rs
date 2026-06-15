@@ -314,7 +314,7 @@ fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
     false
 }
 
-pub fn modify_order(
+pub fn replace_order(
     book: &mut OrderBook,
     order_id: usize,
     new_price: i64,

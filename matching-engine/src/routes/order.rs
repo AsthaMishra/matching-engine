@@ -75,7 +75,7 @@ pub async fn update_order(
 
     let (slot_id, mut rx) = state.slot_pool.pop().expect("slot pool exhausted");
 
-    let _ = sender.send(BookRequest::Modify {
+    let _ = sender.send(BookRequest::Replace {
         order_id: req.order_id,
         price: req.new_price,
         qty: req.new_qty,

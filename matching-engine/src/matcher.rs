@@ -4,7 +4,9 @@ use crossbeam_channel::{Receiver, Select};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-    BookResponse, Response, match_order, modify_order, now_nanos,
+    BookResponse, Response, match_order,
+    matching::replace_order,
+    now_nanos,
     order_book::OrderBook,
     response::BboData,
     types::{CommandType, Order, OrderType, Side},
@@ -24,6 +26,11 @@ pub enum BookRequest {
         slot_id: usize,
     },
     Modify {
+        order_id: usize,
+        qty: u64,
+        slot_id: usize,
+    },
+    Replace {
         order_id: usize,
         price: i64,
         qty: u64,
@@ -146,11 +153,26 @@ pub fn dispatch(req: BookRequest, book: &mut OrderBook, response_txs: &[Sender<B
         }
         BookRequest::Modify {
             order_id,
+            qty,
+            slot_id,
+        } => {
+            let resp = match if qty == 0 {
+                book.cancel_order(order_id)
+            } else {
+                book.update_order(order_id, qty)
+            } {
+                Ok(ord_e) => BookResponse::trades(vec![ord_e]),
+                Err(_) => BookResponse::trades_err(),
+            };
+            let _ = response_txs[slot_id].blocking_send(resp);
+        }
+        BookRequest::Replace {
+            order_id,
             price,
             qty,
             slot_id,
         } => {
-            let resp = match modify_order(book, order_id, price, qty) {
+            let resp = match replace_order(book, order_id, price, qty) {
                 Ok(trades) => BookResponse::trades(trades),
                 Err(_) => BookResponse::trades_err(),
             };

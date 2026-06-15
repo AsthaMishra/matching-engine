@@ -78,7 +78,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let Some(ord_h) = sess.map.get(&replace_order.user_ref_num) else {
                 return res;
             };
-            let o_res = matching_engine::ouch::update_order(
+            let o_res = matching_engine::ouch::replace_order(
                 state,
                 ord_h.symbol,
                 ord_h.order_id.try_into().unwrap(),
@@ -114,21 +114,18 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let Some(ord_h) = sess.map.get(&modify_order.user_ref_num) else {
                 return res;
             };
-            // let o_res = matching_engine::ouch::update_order(
-            //     state,
-            //     ord_h.symbol,
-            //     ord_h.order_id.try_into().unwrap(),
-            //     modify_order.price,
-            //     modify_order.qty,
-            // )
-            // .await;
+            let o_res = matching_engine::ouch::modify_order(
+                state,
+                ord_h.symbol,
+                ord_h.order_id.try_into().unwrap(),
+                modify_order.qty,
+            )
+            .await;
 
-            // let data = o_res.data;
-
-            // for r in data {
-            //     let buf = modify_order.write(ord_h.symbol, ord_h.capacity, ord_h.cross_type, r);
-            //     res.extend_from_slice(&buf);
-            // }
+            for r in o_res.data {
+                let buf = modify_order.write(ord_h.ci_ord_id, r);
+                res.extend_from_slice(&buf);
+            }
         }
         InBoundResponse::MassCancel(mass_cancel_order) => todo!(),
         InBoundResponse::DOE(disable_order_entry) => todo!(),
