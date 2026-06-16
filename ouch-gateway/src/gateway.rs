@@ -61,7 +61,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                     sess.map.insert(
                         add_order.user_ref_num,
                         OrderHandle {
-                            sender: sender.clone(), // tokio mpsc Sender is Clone
+                            sender: sender.clone(),
                             order_id: *id as usize,
                             symbol: add_order.symbol,
                             capacity: add_order.capacity,
@@ -132,10 +132,6 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
         InBoundResponse::EOE(enable_order_entry) => todo!(),
         InBoundResponse::Query(query_account) => todo!(),
     };
-
-    // let res_data = res.data;
-
-    // for ord_e in res_data {}
 
     res
 }

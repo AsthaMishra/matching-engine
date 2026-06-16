@@ -7,3 +7,6 @@ edition = "2024"
 chrono = "0.4.44"
 tokio = { version = "1", features = ["full"] }
 matching-engine = { path = "../matching-engine" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+hdrhistogram = "7"

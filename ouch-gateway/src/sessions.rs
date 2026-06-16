@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use hdrhistogram::Histogram;
 use matching_engine::{AppState, BookSender};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -14,7 +15,7 @@ use tokio::{
     },
 };
 
-use crate::{InBoundResponse, gateway, inbound};
+use crate::gateway;
 
 pub struct OrderHandle {
     pub sender: BookSender,
@@ -49,6 +50,7 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     };
 
     if pkt.is_empty() || pkt[0] != b'L' {
+        tracing::warn!(?peer_addr, "login rejected: expected 'L' login packet");
         login_reject(&mut writer, b'A').await;
         return;
     }
@@ -67,6 +69,11 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     };
 
     login_accept(&mut writer, &sess).await;
+    tracing::info!(session_id = sess.session_id, ?peer_addr, "session established");
+
+    // Wire-to-wire service latency (ns) for sequenced messages, recorded per
+    // message (no I/O on the hot path) and reported as percentiles below.
+    let mut latency = Histogram::<u64>::new(3).expect("valid sigfig");
 
     // Send a server heartbeat after 1s of outbound silence; if we hear nothing
     // from the client for 15s, treat the link as dead and drop it.
@@ -79,6 +86,12 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     let mut hb_timeout = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(15),
         Duration::from_secs(15),
+    );
+
+    // Emit latency percentiles every 5s of activity.
+    let mut metrics_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        Duration::from_secs(5),
     );
 
     loop {
@@ -97,7 +110,12 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                     b'O' => {} // logout
                     b'U' => {} // unsequenced packets
                     b'S' => {
-                        gateway::read(msg, state.clone(), &mut sess).await;
+                        let t_in = std::time::Instant::now();
+                        let o = gateway::read(msg, state.clone(), &mut sess).await;
+                        let _ = writer.write_all(&o).await;
+                        let nanos = t_in.elapsed().as_nanos() as u64;
+                        // record only - no logging on the hot path
+                        latency.saturating_record(nanos);
                     } // sequenced packets
                     _ => {}    // else
                 }
@@ -105,11 +123,33 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
             _ = hb_send.tick() => {
                 send_heartbeat(&mut writer).await;
             }
+            _ = metrics_tick.tick() => {
+                report_latency(sess.session_id, &latency);
+            }
             _ = hb_timeout.tick() => {
                 break; // no inbound traffic for 15s
             }
         }
     }
+
+    report_latency(sess.session_id, &latency);
+    tracing::info!(session_id = sess.session_id, ?peer_addr, "session closed");
+}
+
+// Log p50/p99/p99.9 of the gateway service latency, in nanoseconds.
+fn report_latency(session_id: u64, hist: &Histogram<u64>) {
+    if hist.is_empty() {
+        return;
+    }
+    tracing::info!(
+        session_id,
+        count = hist.len(),
+        p50_ns = hist.value_at_quantile(0.50),
+        p99_ns = hist.value_at_quantile(0.99),
+        p999_ns = hist.value_at_quantile(0.999),
+        max_ns = hist.max(),
+        "gateway service latency"
+    );
 }
 
 // Server Heartbeat: 2-byte big-endian length (1) + type 'H', no payload.
