@@ -57,10 +57,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
 
             // let ci_ord_id = str::from_utf8(buf[31..45].try_into().unwrap()).unwrap();
             let ci_ord_id = buf[31..45].try_into().unwrap();
-            let appendage_length = u16::from_be_bytes(buf[45..47].try_into().unwrap());
-            let tag_value_length = buf[47] as usize;
-            let tag = buf[48];
-            let value = str::from_utf8(&buf[49..49 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[45..47].try_into().unwrap());
+            let _tag_value_length = buf[47] as usize;
+            let _tag = buf[48];
+            let _value = str::from_utf8(&buf[49..49 + _tag_value_length - 1]);
 
             Ok(InBoundResponse::Enter(AddOrder {
                 user_ref_num,
@@ -87,10 +87,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let inter_market_sweep_eligibility = buf[23] as char;
 
             let ci_ord_id = buf[24..38].try_into().unwrap();
-            let appendage_length = u16::from_be_bytes(buf[38..40].try_into().unwrap());
-            let tag_value_length = buf[40] as usize;
-            let tag = buf[41];
-            let value = str::from_utf8(&buf[42..42 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[38..40].try_into().unwrap());
+            let _tag_value_length = buf[40] as usize;
+            let _tag = buf[41];
+            let _value = str::from_utf8(&buf[42..42 + _tag_value_length - 1]);
 
             Ok(InBoundResponse::Replace(ReplaceOrder {
                 org_user_ref_num,
@@ -108,10 +108,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let user_ref_num = u32::from_be_bytes(buf[1..5].try_into().unwrap());
             let qty = u32::from_be_bytes(buf[5..9].try_into().unwrap());
 
-            let appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
-            let tag_value_length = buf[11] as usize;
-            let tag = buf[12];
-            let value = str::from_utf8(&buf[13..13 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
+            let _tag_value_length = buf[11] as usize;
+            let _tag = buf[12];
+            let _value = str::from_utf8(&buf[13..13 + _tag_value_length - 1]);
             Ok(InBoundResponse::Cancel(CancelOrder { user_ref_num, qty }))
         }
         // modify order
@@ -120,10 +120,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let side = buf[5];
             let qty = u32::from_be_bytes(buf[6..10].try_into().unwrap());
 
-            let appendage_length = u16::from_be_bytes(buf[10..12].try_into().unwrap());
-            let tag_value_length = buf[12] as usize;
-            let tag = buf[13];
-            let value = str::from_utf8(&buf[14..14 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[10..12].try_into().unwrap());
+            let _tag_value_length = buf[12] as usize;
+            let _tag = buf[13];
+            let _value = str::from_utf8(&buf[14..14 + _tag_value_length - 1]);
             Ok(InBoundResponse::Modify(ModifyOrder {
                 user_ref_num,
                 side,
@@ -136,10 +136,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
             let firm = buf[5..9].try_into().unwrap();
             let symbol = buf[9..17].try_into().unwrap();
 
-            let appendage_length = u16::from_be_bytes(buf[17..19].try_into().unwrap());
-            let tag_value_length = buf[19] as usize;
-            let tag = buf[20];
-            let value = str::from_utf8(&buf[21..21 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[17..19].try_into().unwrap());
+            let _tag_value_length = buf[19] as usize;
+            let _tag = buf[20];
+            let _value = str::from_utf8(&buf[21..21 + _tag_value_length - 1]);
             Ok(InBoundResponse::MassCancel(MassCancelOrder {
                 user_ref_num,
                 firm,
@@ -150,10 +150,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
         b'D' => {
             let user_ref_num = u32::from_be_bytes(buf[1..5].try_into().unwrap());
             let firm = buf[5..9].try_into().unwrap();
-            let appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
-            let tag_value_length = buf[11] as usize;
-            let tag = buf[12];
-            let value = str::from_utf8(&buf[13..13 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
+            let _tag_value_length = buf[11] as usize;
+            let _tag = buf[12];
+            let _value = str::from_utf8(&buf[13..13 + _tag_value_length - 1]);
 
             Ok(InBoundResponse::DOE(DisableOrderEntry {
                 user_ref_num,
@@ -164,10 +164,10 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
         b'E' => {
             let user_ref_num = u32::from_be_bytes(buf[1..5].try_into().unwrap());
             let firm = buf[5..9].try_into().unwrap();
-            let appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
-            let tag_value_length = buf[11] as usize;
-            let tag = buf[12];
-            let value = str::from_utf8(&buf[13..13 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[9..11].try_into().unwrap());
+            let _tag_value_length = buf[11] as usize;
+            let _tag = buf[12];
+            let _value = str::from_utf8(&buf[13..13 + _tag_value_length - 1]);
 
             Ok(InBoundResponse::EOE(EnableOrderEntry {
                 user_ref_num,
@@ -176,12 +176,12 @@ pub fn parse_enter_order(buf: &[u8]) -> Result<InBoundResponse, &'static str> {
         }
         // account query
         b'Q' => {
-            let appendage_length = u16::from_be_bytes(buf[1..3].try_into().unwrap());
-            let tag_value_length = buf[3] as usize;
-            let tag = buf[4];
-            let value = str::from_utf8(&buf[5..5 + tag_value_length - 1]);
+            let _appendage_length = u16::from_be_bytes(buf[1..3].try_into().unwrap());
+            let _tag_value_length = buf[3] as usize;
+            let _tag = buf[4];
+            let _value = str::from_utf8(&buf[5..5 + _tag_value_length - 1]);
 
-            let user_ref_idx = if appendage_length > 0 {
+            let user_ref_idx = if _appendage_length > 0 {
                 Some(buf[5]) // buf[3]=tv_length, buf[4]=tag(28), buf[5]=value
             } else {
                 None

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::types::{OrderEvent, Trade};
+use crate::types::{OrderEvent};
 
 #[derive(Serialize)]
 pub struct Response<T: Serialize> {

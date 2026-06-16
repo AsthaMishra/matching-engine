@@ -1,6 +1,6 @@
 use crate::{
     AppState, BookRequest, BookResponse, Response, str_to_symbol,
-    types::{CancelRejectReason, OrderEvent, OrderType, Side, Trade},
+    types::{CancelRejectReason, OrderEvent, OrderType, Side},
 };
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;

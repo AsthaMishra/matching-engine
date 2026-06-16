@@ -14,8 +14,8 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let s: Side = match add_order.side {
                 b'B' => Side::Buy,
                 b'S' => Side::Sell,
-                b'T' => Side::Sell_Short,
-                b'E' => Side::Sell_Short_Exempt,
+                b'T' => Side::SellShort,
+                b'E' => Side::SellShortExempt,
                 _ => Side::Buy,
             };
 
@@ -45,7 +45,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let o_res = matching_engine::ouch::add_order(
                 state,
                 add_order.symbol,
-                1,
+                sess.session_id as u32,
                 s,
                 add_order.price,
                 add_order.qty,
@@ -127,10 +127,10 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                 res.extend_from_slice(&buf);
             }
         }
-        InBoundResponse::MassCancel(mass_cancel_order) => todo!(),
-        InBoundResponse::DOE(disable_order_entry) => todo!(),
-        InBoundResponse::EOE(enable_order_entry) => todo!(),
-        InBoundResponse::Query(query_account) => todo!(),
+        InBoundResponse::MassCancel(_mass_cancel_order) => todo!(),
+        InBoundResponse::DOE(_disable_order_entry) => todo!(),
+        InBoundResponse::EOE(_enable_order_entry) => todo!(),
+        InBoundResponse::Query(_query_account) => todo!(),
     };
 
     res

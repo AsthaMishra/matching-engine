@@ -4,11 +4,10 @@ use crossbeam_channel::{Receiver, Select};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-    BookResponse, Response, match_order,
+    BookResponse, match_order,
     matching::replace_order,
     now_nanos,
     order_book::OrderBook,
-    response::BboData,
     types::{CommandType, Order, OrderType, Side},
 };
 

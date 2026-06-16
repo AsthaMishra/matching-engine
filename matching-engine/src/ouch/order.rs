@@ -1,6 +1,6 @@
 use crate::{
     AppState, BookRequest, BookResponse, Response,
-    types::{CancelRejectReason, OrderEvent, OrderType, Side, Trade},
+    types::{CancelRejectReason, OrderEvent, OrderType, Side},
 };
 
 pub async fn add_order(
@@ -11,7 +11,7 @@ pub async fn add_order(
     price: u64,
     qty: u32,
     ord_type: OrderType,
-    time_in_force: u8,
+    _time_in_force: u8,
 ) -> Response<Vec<OrderEvent>> {
     let Some(symbol_id) = state.symbol_registery.read().unwrap().look_up(symbol) else {
         return Response::err(vec![OrderEvent::UnknownSymbol {

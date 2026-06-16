@@ -252,8 +252,8 @@ pub fn match_order(
                 }
             }
         }
-        Side::Sell_Short => todo!(),
-        Side::Sell_Short_Exempt => todo!(),
+        Side::SellShort => todo!(),
+        Side::SellShortExempt => todo!(),
     }
 
     ord_event
@@ -307,8 +307,8 @@ fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
                 }
             }
         }
-        Side::Sell_Short => todo!(),
-        Side::Sell_Short_Exempt => todo!(),
+        Side::SellShort => todo!(),
+        Side::SellShortExempt => todo!(),
     }
 
     false
@@ -333,8 +333,8 @@ pub fn replace_order(
     let price_level = match side {
         Side::Buy => book.bid.get(price_idx),
         Side::Sell => book.ask.get(price_idx),
-        Side::Sell_Short => todo!(),
-        Side::Sell_Short_Exempt => todo!(),
+        Side::SellShort => todo!(),
+        Side::SellShortExempt => todo!(),
     }
     .ok_or("internal: price slot out of bounds")?;
 

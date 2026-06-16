@@ -62,8 +62,8 @@ impl Order {
 pub enum Side {
     Buy,
     Sell,
-    Sell_Short,
-    Sell_Short_Exempt,
+    SellShort,
+    SellShortExempt,
 }
 
 #[derive(Clone, Copy, PartialEq, Deserialize)]

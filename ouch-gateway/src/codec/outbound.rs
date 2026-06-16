@@ -1,9 +1,9 @@
 use chrono::Timelike;
 
 pub struct TagValue {
-    len: u8,
-    tag: u8,
-    val: String,
+    _len: u8,
+    _tag: u8,
+    _val: String,
 }
 
 fn nano_since_midnight() -> u64 {

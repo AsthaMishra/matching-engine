@@ -26,13 +26,13 @@ impl AddOrder {
                 side,
                 price,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
 
                 let o = outbound::order_accepted(
@@ -53,17 +53,17 @@ impl AddOrder {
                 res.extend_from_slice(&o);
             }
             OrderEvent::Modified {
-                id,
+                id: _,
                 side,
-                price,
+                price: _,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
                 res.extend_from_slice(&o);
@@ -73,13 +73,13 @@ impl AddOrder {
                 side,
                 price,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_replaced(
                     self.user_ref_num,
@@ -109,11 +109,15 @@ impl AddOrder {
                 );
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Canceled { id, qty, reason } => {
+            OrderEvent::Canceled {
+                id: _,
+                qty: _,
+                reason,
+            } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Rejected { id, reason } => {
+            OrderEvent::Rejected { id: _, reason } => {
                 let o = outbound::order_rejected(
                     self.user_ref_num,
                     reason.code() as u16,
@@ -158,17 +162,17 @@ impl ReplaceOrder {
 
         match ord_e {
             OrderEvent::Modified {
-                id,
+                id: _,
                 side,
-                price,
+                price: _,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
                 res.extend_from_slice(&o);
@@ -178,13 +182,13 @@ impl ReplaceOrder {
                 side,
                 price,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_replaced(
                     self.org_user_ref_num,
@@ -214,11 +218,15 @@ impl ReplaceOrder {
                 );
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Canceled { id, qty, reason } => {
+            OrderEvent::Canceled {
+                id: _,
+                qty: _,
+                reason,
+            } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Rejected { id, reason } => {
+            OrderEvent::Rejected { id: _, reason } => {
                 let o = outbound::order_rejected(
                     self.user_ref_num,
                     reason.code() as u16,
@@ -234,13 +242,7 @@ impl ReplaceOrder {
                 );
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Accepted {
-                id,
-                side,
-                price,
-                qty,
-                remaining_qty,
-            } => {
+            OrderEvent::Accepted { .. } => {
                 unreachable!("replace order cannot result in accepted event")
             }
         }
@@ -258,11 +260,15 @@ impl CancelOrder {
     pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent) -> Vec<u8> {
         let mut res: Vec<u8> = vec![];
         match ord_e {
-            OrderEvent::Canceled { id, qty, reason } => {
+            OrderEvent::Canceled {
+                id: _,
+                qty: _,
+                reason,
+            } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Rejected { id, reason } => {
+            OrderEvent::Rejected { id: _, reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
                 res.extend_from_slice(&o);
@@ -302,26 +308,30 @@ impl ModifyOrder {
 
         match ord_e {
             OrderEvent::Modified {
-                id,
+                id: _,
                 side,
-                price,
+                price: _,
                 qty,
-                remaining_qty,
+                remaining_qty: _,
             } => {
                 let s = match side {
                     Side::Buy => b'B',
                     Side::Sell => b'S',
-                    Side::Sell_Short => b'T',
-                    Side::Sell_Short_Exempt => b'E',
+                    Side::SellShort => b'T',
+                    Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Canceled { id, qty, reason } => {
+            OrderEvent::Canceled {
+                id: _,
+                qty: _,
+                reason,
+            } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
                 res.extend_from_slice(&o);
             }
-            OrderEvent::Rejected { id, reason } => {
+            OrderEvent::Rejected { id: _, reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
                 res.extend_from_slice(&o);

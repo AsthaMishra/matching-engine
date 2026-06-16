@@ -1,5 +1,3 @@
-use bumpalo::collections::Vec as BVec;
-
 use crate::{
     INDEX_CAPACITY, MAX_PRICE, ORDER_CAPACITY, TICK_SIZE, price_to_idx,
     types::{CancelRejectReason, Order, OrderEvent, Side},
@@ -85,8 +83,8 @@ impl OrderBook {
             let price_level = match side {
                 Side::Buy => &mut self.bid,
                 Side::Sell => &mut self.ask,
-                Side::Sell_Short => todo!(),
-                Side::Sell_Short_Exempt => todo!(),
+                Side::SellShort => todo!(),
+                Side::SellShortExempt => todo!(),
             };
 
             match &mut price_level[price_idx] {
@@ -100,8 +98,8 @@ impl OrderBook {
                     let bit_map = match side {
                         Side::Buy => &mut self.bid_bitmap,
                         Side::Sell => &mut self.ask_bitmap,
-                        Side::Sell_Short => todo!(),
-                        Side::Sell_Short_Exempt => todo!(),
+                        Side::SellShort => todo!(),
+                        Side::SellShortExempt => todo!(),
                     };
                     bit_map[price_idx / 64] |= 1u64 << (price_idx % 64);
                     *slot = Some(PriceLevel::new(
@@ -127,8 +125,8 @@ impl OrderBook {
                     self.best_ask_idx = Some(price_idx);
                 }
             }
-            Side::Sell_Short => todo!(),
-            Side::Sell_Short_Exempt => todo!(),
+            Side::SellShort => todo!(),
+            Side::SellShortExempt => todo!(),
         }
 
         Ok((id, side, p, qty, qty))
@@ -158,8 +156,8 @@ impl OrderBook {
             let pl = match side {
                 Side::Buy => self.bid.get_mut(price_idx),
                 Side::Sell => self.ask.get_mut(price_idx),
-                Side::Sell_Short => todo!(),
-                Side::Sell_Short_Exempt => todo!(),
+                Side::SellShort => todo!(),
+                Side::SellShortExempt => todo!(),
             }
             .ok_or("internal: price slot out of bounds")?;
 
@@ -215,8 +213,8 @@ impl OrderBook {
         let level = match s {
             Side::Buy => self.bid.get_mut(price_idx),
             Side::Sell => self.ask.get_mut(price_idx),
-            Side::Sell_Short => todo!(),
-            Side::Sell_Short_Exempt => todo!(),
+            Side::SellShort => todo!(),
+            Side::SellShortExempt => todo!(),
         }
         .ok_or("internal: price slot out of bounds")?;
 
@@ -257,8 +255,8 @@ impl OrderBook {
                             self.best_ask_idx = self.scan_best_ask();
                         }
                     }
-                    Side::Sell_Short => todo!(),
-                    Side::Sell_Short_Exempt => todo!(),
+                    Side::SellShort => todo!(),
+                    Side::SellShortExempt => todo!(),
                 };
             }
         }
@@ -432,8 +430,8 @@ impl OrderBook {
                     }
                 }
             }
-            Side::Sell_Short => todo!(),
-            Side::Sell_Short_Exempt => todo!(),
+            Side::SellShort => todo!(),
+            Side::SellShortExempt => todo!(),
         }
         result
     }
@@ -470,70 +468,70 @@ impl OrderBook {
         match side {
             Side::Sell => self.ask.get(idx)?.as_ref().map(|pl| pl.total_qty),
             Side::Buy => self.bid.get(idx)?.as_ref().map(|pl| pl.total_qty),
-            Side::Sell_Short => todo!(),
-            Side::Sell_Short_Exempt => todo!(),
+            Side::SellShort => todo!(),
+            Side::SellShortExempt => todo!(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::{Order, OrderType, Side};
+    // use super::*;
+    // use crate::types::{Order, OrderType, Side};
 
-    fn make_bid(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
-        Order::new(
-            id,
-            trader_id,
-            Side::Buy,
-            OrderType::Limit,
-            price,
-            qty,
-            qty,
-            0,
-        )
-    }
+    // fn make_bid(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
+    //     Order::new(
+    //         id,
+    //         trader_id,
+    //         Side::Buy,
+    //         OrderType::Limit,
+    //         price,
+    //         qty,
+    //         qty,
+    //         0,
+    //     )
+    // }
 
-    fn make_ask(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
-        Order::new(
-            id,
-            trader_id,
-            Side::Sell,
-            OrderType::Limit,
-            price,
-            qty,
-            qty,
-            0,
-        )
-    }
+    // fn make_ask(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
+    //     Order::new(
+    //         id,
+    //         trader_id,
+    //         Side::Sell,
+    //         OrderType::Limit,
+    //         price,
+    //         qty,
+    //         qty,
+    //         0,
+    //     )
+    // }
 
-    fn bid_order_ids_at(book: &OrderBook, price: i64) -> Vec<u64> {
-        book.bid
-            .get(price_to_idx(price).unwrap())
-            .map(|pl| {
-                pl.as_ref()
-                    .unwrap()
-                    .orders
-                    .iter()
-                    .map(|o| o.id as u64)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
+    // fn bid_order_ids_at(book: &OrderBook, price: i64) -> Vec<u64> {
+    //     book.bid
+    //         .get(price_to_idx(price).unwrap())
+    //         .map(|pl| {
+    //             pl.as_ref()
+    //                 .unwrap()
+    //                 .orders
+    //                 .iter()
+    //                 .map(|o| o.id as u64)
+    //                 .collect()
+    //         })
+    //         .unwrap_or_default()
+    // }
 
-    fn ask_order_ids_at(book: &OrderBook, price: i64) -> Vec<u64> {
-        book.ask
-            .get(price_to_idx(price).unwrap())
-            .map(|pl| {
-                pl.as_ref()
-                    .unwrap()
-                    .orders
-                    .iter()
-                    .map(|o| o.id as u64)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
+    // fn ask_order_ids_at(book: &OrderBook, price: i64) -> Vec<u64> {
+    //     book.ask
+    //         .get(price_to_idx(price).unwrap())
+    //         .map(|pl| {
+    //             pl.as_ref()
+    //                 .unwrap()
+    //                 .orders
+    //                 .iter()
+    //                 .map(|o| o.id as u64)
+    //                 .collect()
+    //         })
+    //         .unwrap_or_default()
+    // }
 
     // --- place_order (bid) ---
 
