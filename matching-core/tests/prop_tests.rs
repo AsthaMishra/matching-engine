@@ -1,4 +1,4 @@
-use matching_engine::{
+use matching_core::{
     MAX_PRICE, match_order,
     order_book::OrderBook,
     types::{CommandType, Order, OrderEvent, OrderType, Side, Trade},

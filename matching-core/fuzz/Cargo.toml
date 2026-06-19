@@ -12,7 +12,7 @@ libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 arbitrary = { version = "1", features = ["derive"] }
 bumpalo = { version = "3", features = ["collections"] }
 
-[dependencies.matching-engine]
+[dependencies.matching-core]
 path = ".."
 
 # Keep fuzz out of the workspace so normal builds ignore it

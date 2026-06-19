@@ -3,7 +3,7 @@
 use arbitrary::Arbitrary;
 use bumpalo::Bump;
 use libfuzzer_sys::fuzz_target;
-use matching_engine::{
+use matching_core::{
     match_order, modify_order,
     order_book::OrderBook,
     types::{Order, OrderType, Side, Trade},

@@ -1,4 +1,4 @@
-use matching_engine::{
+use matching_core::{
     match_order,
     matching::replace_order,
     order_book::OrderBook,
@@ -827,7 +827,7 @@ fn place_order_zero_price_rejected() {
 
 #[test]
 fn place_order_max_price_rejected() {
-    use matching_engine::MAX_PRICE;
+    use matching_core::MAX_PRICE;
 
     let mut book = OrderBook::new();
     let id = book.allocate_id();

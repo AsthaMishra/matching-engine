@@ -13,7 +13,7 @@
 // Conversion: internal_cents = itch_price_raw / 100.
 // Stocks priced above $1000 (MAX_PRICE) are skipped.
 
-use matching_engine::{
+use matching_core::{
     MAX_PRICE, match_order,
     order_book::OrderBook,
     types::{CommandType, Order, OrderEvent, OrderType, Side},

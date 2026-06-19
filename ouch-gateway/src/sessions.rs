@@ -43,6 +43,10 @@ pub async fn run(state: AppState) {
 }
 
 pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppState) {
+    // Disable Nagle: without this, small response writes get coalesced and
+    // collide with the client's delayed ACKs -> periodic ~40ms stalls.
+    let _ = stream.set_nodelay(true);
+
     let (mut reader, mut writer) = stream.split();
 
     let Some(pkt) = read_packet(&mut reader).await else {
@@ -51,14 +55,14 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
 
     if pkt.is_empty() || pkt[0] != b'L' {
         tracing::warn!(?peer_addr, "login rejected: expected 'L' login packet");
-        login_reject(&mut writer, b'A').await;
+        let _ = writer.write_all(&login_reject(b'A').await);
         return;
     }
 
     let username: [u8; 6] = pkt[1..7].try_into().unwrap();
 
     // not using it as i am not implementing authentication for this
-    let password: [u8; 10] = pkt[7..17].try_into().unwrap();
+    let _password: [u8; 10] = pkt[7..17].try_into().unwrap();
 
     static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
     let mut sess = Session {
@@ -69,11 +73,18 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
     };
 
     login_accept(&mut writer, &sess).await;
-    tracing::info!(session_id = sess.session_id, ?peer_addr, "session established");
+    tracing::info!(
+        session_id = sess.session_id,
+        ?peer_addr,
+        "session established"
+    );
 
-    // Wire-to-wire service latency (ns) for sequenced messages, recorded per
-    // message (no I/O on the hot path) and reported as percentiles below.
-    let mut latency = Histogram::<u64>::new(3).expect("valid sigfig");
+    // Split the round trip to localize the tail (ns, recorded on the hot path
+    // with no I/O):
+    //   svc = parse + engine round trip + encode  (everything in gateway::read)
+    //   wr  = socket write_all
+    let mut svc = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).expect("valid bounds");
+    let mut wr = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).expect("valid bounds");
 
     // Send a server heartbeat after 1s of outbound silence; if we hear nothing
     // from the client for 15s, treat the link as dead and drop it.
@@ -110,12 +121,14 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                     b'O' => {} // logout
                     b'U' => {} // unsequenced packets
                     b'S' => {
-                        let t_in = std::time::Instant::now();
+                        let t0 = std::time::Instant::now();
                         let o = gateway::read(msg, state.clone(), &mut sess).await;
+                        let t1 = std::time::Instant::now();
                         let _ = writer.write_all(&o).await;
-                        let nanos = t_in.elapsed().as_nanos() as u64;
+                        let t2 = std::time::Instant::now();
                         // record only - no logging on the hot path
-                        latency.saturating_record(nanos);
+                        svc.saturating_record(t1.duration_since(t0).as_nanos() as u64);
+                        wr.saturating_record(t2.duration_since(t1).as_nanos() as u64);
                     } // sequenced packets
                     _ => {}    // else
                 }
@@ -124,7 +137,11 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                 send_heartbeat(&mut writer).await;
             }
             _ = metrics_tick.tick() => {
-                report_latency(sess.session_id, &latency);
+                // Report this window, then reset so each report is steady-state
+                // (not diluted by all prior samples).
+                report_latency(sess.session_id, &svc, &wr);
+                svc.clear();
+                wr.clear();
             }
             _ = hb_timeout.tick() => {
                 break; // no inbound traffic for 15s
@@ -132,23 +149,27 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
         }
     }
 
-    report_latency(sess.session_id, &latency);
+    report_latency(sess.session_id, &svc, &wr);
     tracing::info!(session_id = sess.session_id, ?peer_addr, "session closed");
 }
 
-// Log p50/p99/p99.9 of the gateway service latency, in nanoseconds.
-fn report_latency(session_id: u64, hist: &Histogram<u64>) {
-    if hist.is_empty() {
+// Log p50/p99/p99.9 for each segment (ns), so the tail can be localized.
+fn report_latency(session_id: u64, svc: &Histogram<u64>, wr: &Histogram<u64>) {
+    if svc.is_empty() {
         return;
     }
     tracing::info!(
         session_id,
-        count = hist.len(),
-        p50_ns = hist.value_at_quantile(0.50),
-        p99_ns = hist.value_at_quantile(0.99),
-        p999_ns = hist.value_at_quantile(0.999),
-        max_ns = hist.max(),
-        "gateway service latency"
+        count = svc.len(),
+        svc_p50 = svc.value_at_quantile(0.50),
+        svc_p99 = svc.value_at_quantile(0.99),
+        svc_p999 = svc.value_at_quantile(0.999),
+        svc_max = svc.max(),
+        wr_p50 = wr.value_at_quantile(0.50),
+        wr_p99 = wr.value_at_quantile(0.99),
+        wr_p999 = wr.value_at_quantile(0.999),
+        wr_max = wr.max(),
+        "latency split: svc=gateway+engine, wr=socket write (ns)"
     );
 }
 
@@ -174,7 +195,7 @@ async fn login_accept(wr: &mut WriteHalf<'_>, sess: &Session) {
     wr.write_all(&buf).await.unwrap();
 }
 
-async fn login_reject(writer: &mut WriteHalf<'_>, reject_code: u8) -> [u8; 4] {
+async fn login_reject(reject_code: u8) -> [u8; 4] {
     let mut buf = [0u8; 4];
     buf[0..2].copy_from_slice(&2u16.to_be_bytes()); // payload length = 2
     buf[1] = b'J';

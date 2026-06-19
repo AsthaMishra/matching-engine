@@ -42,7 +42,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                 );
             };
 
-            let o_res = matching_engine::ouch::add_order(
+            let o_res = matching_engine::client::add_order(
                 state,
                 add_order.symbol,
                 sess.session_id as u32,
@@ -78,7 +78,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let Some(ord_h) = sess.map.get(&replace_order.user_ref_num) else {
                 return res;
             };
-            let o_res = matching_engine::ouch::replace_order(
+            let o_res = matching_engine::client::replace_order(
                 state,
                 ord_h.symbol,
                 ord_h.order_id.try_into().unwrap(),
@@ -98,7 +98,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let Some(ord_h) = sess.map.get(&cancel_order.user_ref_num) else {
                 return res;
             };
-            let o_res = matching_engine::ouch::cancel_order(
+            let o_res = matching_engine::client::cancel_order(
                 state,
                 ord_h.symbol,
                 ord_h.order_id.try_into().unwrap(),
@@ -114,7 +114,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
             let Some(ord_h) = sess.map.get(&modify_order.user_ref_num) else {
                 return res;
             };
-            let o_res = matching_engine::ouch::modify_order(
+            let o_res = matching_engine::client::modify_order(
                 state,
                 ord_h.symbol,
                 ord_h.order_id.try_into().unwrap(),

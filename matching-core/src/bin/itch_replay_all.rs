@@ -16,7 +16,7 @@
 // Memory note: each OrderBook pre-allocates ~12.8 MB (100K price slots × 2 sides).
 // Default top_n=100 → ~1.3 GB peak. Raise at your own risk.
 
-use matching_engine::{
+use matching_core::{
     MAX_PRICE, match_order,
     order_book::OrderBook,
     types::{CommandType, Order, OrderEvent, OrderType, Side},

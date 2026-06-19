@@ -1,32 +1,15 @@
-pub mod order_book;
-pub mod types;
-
-pub mod matching;
-pub use matching::*;
-
-pub mod utils;
-pub use utils::*;
+// Runtime + transport-adapter crate. Re-exports the pure core so existing
+// `matching_engine::…` and internal `crate::…` paths keep resolving.
+pub use matching_core::*;
 
 pub mod app_state;
 pub use app_state::*;
 
-pub mod routes;
-pub use routes::*;
-
 pub mod exchange;
 pub use exchange::*;
-
-pub mod symbol_registry;
-pub use symbol_registry::*;
-
-pub mod error;
-pub use error::*;
 
 pub mod matcher;
 pub use matcher::*;
 
-pub mod response;
-pub use response::*;
-
-pub mod ouch;
-pub use ouch::*;
+pub mod client;
+pub use client::*;

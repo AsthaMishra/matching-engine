@@ -1,0 +1,9 @@
+[package]
+name = "rest-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+matching-engine = { path = "../matching-engine" }
+axum = { version = "0.8.9" }
+serde = { version = "1.0.228", features = ["derive"] }

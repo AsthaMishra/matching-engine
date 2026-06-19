@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use matching_engine::{
+use matching_core::{
     match_order,
     order_book::OrderBook,
     types::{CommandType, Order, OrderType, Side},
