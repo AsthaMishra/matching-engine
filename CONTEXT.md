@@ -150,28 +150,103 @@ The matching core stays pure (`commands → event stream`); gateways/market-data
 
 ## 8. Latency findings so far
 
-Baseline at 1M orders, lock-step, single session, WSL2, release:
+1M orders, lock-step, single client, WSL2, release.
 
-- **Median is healthy & stable:** `svc` p50 ≈ 13µs, `wr` p50 ≈ 10µs, client round-trip p50 ≈ 33µs.
-- **Tail investigation (segmented svc vs wr):**
-  - **Nagle/delayed-ACK was a real bug.** The server's accepted socket wasn't setting `TCP_NODELAY` (only the client was) → periodic ~36ms `wr` stalls. **Fixed** with `stream.set_nodelay(true)` in `session()`. Result: `wr_p999` ~3–4ms → ~130µs; client p99 2.96ms → 1.81ms; throughput +12%.
-  - **WSL2 jitter** causes co-occurring 100ms+ maxes in *both* segments (whole-process descheduling). Environmental, not code.
-  - **Remaining tail is in `svc`** (`p999` ~5.7ms cumulative) = the **engine round trip** (crossbeam send → worker thread wakeup → tokio mpsc reply → task wakeup). This is the next target.
+### The big result: single-threaded run-to-completion eliminated the tail
 
-**Gateway-side tail work is essentially done** — Nagle was the one real lever. Allocation/clone micro-opts (per-order `Vec`s, `state.clone()`) are hygiene and will **not** move a multi-ms tail, so they're deprioritized.
+The OUCH order path was moved **off** the async+worker design. `sessions.rs` is now a
+**synchronous, blocking, run-to-completion** server: one thread owns a plain `OrderBook`
+and does read → `match_order` → write **inline** — no tokio, no channels, no lock, so
+there are zero thread handoffs or scheduling points on the hot path.
+
+| metric | async + worker | single-threaded |
+|---|---|---|
+| `eng` p50 (match_order) | ~10µs | **201 ns** |
+| **`eng` p99.9** | **~5.7 ms** | **~6 µs** (~1000×) |
+| client p99 | ~3 ms | **83 µs** |
+| client p99.9 | ~6.5 ms | **127 µs** |
+| throughput | ~11k/s | **24.7k/s** (2.2×) |
+
+So the entire multi-ms tail was the **cross-thread handoff + scheduler wakeup**
+(crossbeam → worker thread → tokio mpsc → task wakeup) — **not** the matching, the
+gateway, or the socket. Proven by the segmented `svc`/`eng`/`wr` histograms: the `eng`
+(engine round-trip) segment carried ~100% of the old tail.
+
+### The journey there (for reference)
+- Segmented `svc`/`eng`/`wr` to localize → tail lived entirely in `eng`, exonerating gateway parse/encode and the socket.
+- **Nagle/delayed-ACK** was a real bug — server socket wasn't `TCP_NODELAY` → ~36ms `wr` stalls. Fixed (`set_nodelay(true)`), carried into the single-threaded server.
+
+### New bottleneck: the system is now I/O-bound, not compute-bound
+- match = ~200ns (free); parse+match+encode (`svc`) ~1.3µs p50.
+- **socket write (`wr`) ~13µs p50 is now the largest server-side cost** — it's the `write_all` syscall + TCP stack, not our code.
+- client RTT ~37µs p50 = mostly client/server syscalls + loopback.
+- Remaining tail (client p99.9 ~127µs) is syscall/socket jitter; the rare ms `max` is WSL2 descheduling (environmental).
+
+Further latency now needs **OS/hardware** work (busy-polled sockets / `io_uring` / kernel-bypass, bare-metal Linux), not architecture.
+
+> Architecture note: the async worker / `AppState` / slot-pool machinery still exists
+> (REST `rest-gateway` uses it), but the **OUCH path no longer does** — it's the
+> single-threaded blocking server in `sessions.rs`/`server` `main.rs`. Sections 2–3
+> describe the original worker design; the OUCH hot path has diverged from it.
+
+### Throughput (the 28M ops/sec goal) — separate axis, measured in-memory
+
+Throughput ≠ latency. The lock-step network test is RTT-bound (~25k/s) and **cannot**
+measure throughput. The real number comes from the in-memory bench
+(`cargo bench -p matching-core throughput`, `benches/order_book.rs`), which feeds orders
+straight to `match_order` with no network. Single-core results:
+
+| bench | before | after reusable buffer | per-op |
+|---|---|---|---|
+| **`insert_warm`** (steady-state insert) | 25.4 M/s | **32–33 M/s** | 39 → **31 ns** ✅ **past 28M on one core** |
+| `insert_no_match` (new level each op) | 14.6 M/s | **24 M/s** | 68 → 42 ns |
+| `add_then_match` (with fills) | 2.6 M/s | **4.7 M/s** | 379 → 207 ns |
+
+Match-path latency (in-memory): p50 ~0–100ns, **p99.9 ~101ns**, cancel p99.9 ~101ns.
+
+**The win:** `match_order` allocated a `Vec<OrderEvent>` per call. Added `match_order_into(book, order, cmd, out: &mut Vec<OrderEvent>)` (clears + reuses the caller's buffer); kept `match_order` as an allocating wrapper for non-hot call sites. The bench and the single-threaded server hot path (`gateway::read` holds `out: Vec<u8>` + `ev_buf: Vec<OrderEvent>` reused across messages) use `match_order_into`. Removing the per-call alloc gave +27–83% throughput **and** dropped match p99.9 from 794ns → ~101ns.
+
+**Status vs 28M:** met on one core for the **insert/cancel** path (the bulk of real flow) — sharding across pinned cores → 60M+. The **fill path** (`add_then_match`, 4.7 M/s) is the remaining gap. Next lever: **`PriceLevel` pooling** — stop `None`-ing + re-allocating a price level's `Vec<Order>` on full drain; reuse it. That closes both `insert_no_match`→`insert_warm` and the fill-path churn. Also pending: non-atomic `trade_id` (fires only on fills).
+
+### Wire throughput (over OUCH) — separate from engine throughput
+
+The 33M is the *engine* number; the *wire* (order-to-ack over the socket) is far lower
+and **syscall-bound**. Two clients:
+- `load_client` — lock-step (1 order in flight) → measures **latency** (throughput pinned at `1/RTT` ≈ 25k/s).
+- `pipe_client` — pipelined with a bounded in-flight window `W` (2nd arg) → measures **wire throughput + latency-under-load**. Sweep `W` to trace the latency-vs-throughput curve.
+
+Latency-vs-throughput sweep (1M orders, single connection, single-threaded server, WSL2):
+
+| W | throughput | p50 | p99 | p99.9 |
+|---|---|---|---|---|
+| 1 | 24.4k/s | 37.6µs | 80µs | 125µs |
+| **4** | **62.5k/s** | **34µs** | 110µs | 168µs |
+| 16 | 63.3k/s | 189µs | 305µs | 424µs |
+
+- **Knee at W≈4:** 2.5× throughput (24k→62k) at *unchanged* p50 (~34µs) — the pipe was just idle waiting on RTT.
+- Past the knee (W=16): throughput flat (~63k), latency 5×'s → pure queuing, no gain.
+- **Headline wire figure: ~62k orders/sec at p99 = 110µs** (order-to-ack, OUCH included).
+- Saturation ~63k/s = single-thread + ~3 syscalls/order; the match is ~0ns. To lift it: **batch syscalls** (`recvmmsg`/`readv`, write many acks at once) or `io_uring`, and/or multi-connection + sharded server. Wire will land in hundreds-of-k to low-M even optimized — 28M is the in-memory number, a different axis.
+- Methodology note: unbounded push (no `W`) gives meaningless seconds-scale latency (queue depth ÷ drain rate / coordinated omission) — always bound in-flight for latency-under-load.
 
 ---
 
 ## 9. Next steps (current plan)
 
-**Just completed:** per-interval histogram reset (steady-state windows). Next run: read the *middle* windows (ignore window 1 = cold start) to see the true steady-state `svc` tail.
+The tail is **solved** (section 8) — the system is I/O-bound, not architecture-bound.
+Options from here, in rough priority:
 
-**Engine phase (next):** localize the `svc` tail before optimizing. Instrument `ouch::add_order`'s round trip into three sub-phases:
-1. send → worker pickup (time the request waits in the crossbeam channel),
-2. worker `match_order` processing,
-3. reply → `recv().await` (response wait + async task wakeup).
+- **Bank the result.** Median ~37µs RTT, p99.9 ~127µs, no ms tail. Good baseline.
+- **(Optional) push syscall latency** — busy-polled sockets / `io_uring` for single-digit-µs gains. Deep HFT territory, big effort, diminishing returns.
+- **(Optional) bare-metal Linux** to confirm the rare ms `max` is WSL2, not code.
+- **Correctness/coverage over latency:** finish Cancel/Modify/Replace edge cases (reject fidelity, side handling), multi-symbol, then Milestone B.
 
-Expected culprit: **cross-thread wakeup latency** (parked worker thread / tokio scheduling), not match compute. Likely fixes: busy-poll the worker, or move to the async egress architecture (section 7).
+**Caveat for Milestone B (matched flow):** the single-threaded server is
+*one-connection-at-a-time* (sequential `accept`). Multi-client + maker-side fan-out
+will need either **non-blocking I/O (a poll loop) on the single thread** or the
+**thread-per-core shard** model — *not* the async egress design (section 7), which was
+built for the worker architecture the OUCH path has now left behind. Revisit section 7
+in that light before starting B.
 
 ---
 
@@ -185,76 +260,39 @@ Expected culprit: **cross-thread wakeup latency** (parked worker thread / tokio 
 
 ## 11. Milestones & roadmap
 
-Two milestones drive the latency goal, plus the current optimization sub-phase.
-
 ### Milestone A — first wire-to-wire number ✅ DONE
 Measure Enter→Accept wire-to-wire for a single session, order rests (no cross).
-Achieved via the **synchronous slot path** (the async egress design was deferred to B).
 - [x] Enter handler encodes `Accept`; session map populated on `Accepted`
 - [x] Response written back to the socket
-- [x] Server-side timestamping + hdrhistogram (`svc`/`wr` split, per-interval reset)
+- [x] Server-side timestamping + hdrhistogram (`svc`/`eng`/`wr` split, per-interval reset)
 - [x] Load client: login → N `Enter`s lock-step → client-side percentiles
-- [x] First real numbers obtained (median ≈ 13µs `svc` / ≈ 33µs client round-trip)
+- [x] First real numbers obtained
 
-Original estimate: ~4–6 focused days. Done.
+### Tail-latency optimization ✅ DONE
+Goal was to cut the p99/p99.9 tail; it's eliminated.
+- [x] Segmented latency (`svc`/`eng`/`wr`) → tail localized entirely to the engine round trip
+- [x] `TCP_NODELAY` (Nagle/delayed-ACK fix)
+- [x] Per-interval histogram reset (steady-state windows)
+- [x] **Single-threaded run-to-completion** (no tokio/channels/lock on the OUCH path) → `eng` p99.9 ~6ms → ~6µs, client p99.9 ~6.5ms → 127µs, throughput 2.2×
+- Result: tail gone; system now **I/O-bound** (socket/syscall), not architecture-bound. See section 8.
+
+### Throughput — 28M ops/sec goal 🟡 MET ON INSERTS, fill path remains
+Measured in-memory (`cargo bench -p matching-core throughput`), not over the network.
+- [x] Reusable `Vec<OrderEvent>` buffer (`match_order_into`) — +27–83% throughput, match p99.9 794ns → ~101ns
+- [x] **`insert_warm` = 32–33 M/s single-core (31 ns/op)** → 28M goal met for the insert/cancel path (the bulk of real flow); sharding → 60M+
+- [ ] Fill path (`add_then_match` 4.7 M/s) — next lever: **`PriceLevel` pooling** (reuse drained levels instead of realloc) + non-atomic `trade_id`
+- [ ] Thread-per-core sharding for total throughput beyond one core
+See section 8 for the table.
 
 ### Milestone B — realistic matched-flow latency ⬜ NOT STARTED
-Measure latency under real two-sided flow (orders that cross and fan out to two sessions).
-**Requires the async egress architecture (section 7)** — the synchronous path structurally
-cannot deliver maker-side fills.
-- [ ] Opaque `token` through engine (`PlaceOrder`/`Order`/`OrderEvent`/`Trade`)
-- [ ] Egress channel out of workers; worker emits instead of slot-reply
-- [ ] Distribution layer (`token >> 32` → session) + per-session outbound channels
-- [ ] `add_order` fire-and-forget; Cancel/Modify/Replace verified end-to-end
+Measure latency under real two-sided flow (orders that cross and fan out to two clients).
+**Note:** the single-threaded OUCH server serves one connection at a time, so B now needs
+non-blocking I/O (poll loop) on the single thread **or** thread-per-core sharding — *not*
+the async egress design (section 7), which targeted the abandoned worker architecture.
+- [ ] Multi-client I/O on the single-threaded server (or thread-per-core shard)
+- [ ] Maker-side fill delivery (resting order filled by another client)
+- [ ] Cancel/Modify/Replace verified end-to-end + edge cases
 - [ ] Cancel-on-disconnect
-- [ ] Two-sided load generator (crossing flow)
+- [ ] Two-sided (crossing) load generator
 
-Estimate: ~5–8 focused days on top of A.
-
-### Current sub-phase — tail-latency optimization 🔻 IN PROGRESS
-Sits on top of Milestone A's measurement; goal is to cut the p99/p99.9 tail.
-- [x] Gateway: `TCP_NODELAY` (Nagle/delayed-ACK fix) — `wr` tail ~ms → ~130µs, client p99 2.96ms → 1.81ms
-- [x] Per-interval histogram reset (steady-state windows)
-- [ ] Engine: instrument `ouch::add_order` round trip into 3 sub-phases to localize the ~5.7ms `svc` tail
-- [ ] Optimize the located cause (likely cross-thread wakeup; possibly resolved by section 7's async design)
-
-See sections 8–9 for findings & plan. Caveat: solo/learning pace + WSL2 jitter inflate both the schedule and the tail.
-
----
-
-## 11. Milestones & roadmap
-
-Two milestones drive the latency goal, plus the current optimization sub-phase.
-
-### Milestone A — first wire-to-wire number ✅ DONE
-Measure Enter→Accept wire-to-wire for a single session, order rests (no cross).
-Achieved via the **synchronous slot path** (the async egress design was deferred to B).
-- [x] Enter handler encodes `Accept`; session map populated on `Accepted`
-- [x] Response written back to the socket
-- [x] Server-side timestamping + hdrhistogram (`svc`/`wr` split, per-interval reset)
-- [x] Load client: login → N `Enter`s lock-step → client-side percentiles
-- [x] First real numbers obtained (median ≈ 13µs `svc` / ≈ 33µs client round-trip)
-
-Original estimate: ~4–6 focused days. Done.
-
-### Milestone B — realistic matched-flow latency ⬜ NOT STARTED
-Measure latency under real two-sided flow (orders that cross and fan out to two sessions).
-**Requires the async egress architecture (section 7)** — the synchronous path structurally
-cannot deliver maker-side fills.
-- [ ] Opaque `token` through engine (`PlaceOrder`/`Order`/`OrderEvent`/`Trade`)
-- [ ] Egress channel out of workers; worker emits instead of slot-reply
-- [ ] Distribution layer (`token >> 32` → session) + per-session outbound channels
-- [ ] `add_order` fire-and-forget; Cancel/Modify/Replace verified end-to-end
-- [ ] Cancel-on-disconnect
-- [ ] Two-sided load generator (crossing flow)
-
-Estimate: ~5–8 focused days on top of A.
-
-### Current sub-phase — tail-latency optimization 🔻 IN PROGRESS
-Sits on top of Milestone A's measurement; goal is to cut the p99/p99.9 tail.
-- [x] Gateway: `TCP_NODELAY` (Nagle/delayed-ACK fix) — `wr` tail ~ms → ~130µs, client p99 2.96ms → 1.81ms
-- [x] Per-interval histogram reset (steady-state windows)
-- [ ] Engine: instrument `ouch::add_order` round trip into 3 sub-phases to localize the ~5.7ms `svc` tail
-- [ ] Optimize the located cause (likely cross-thread wakeup; possibly resolved by section 7's async design)
-
-See sections 8–9 for findings & plan. Caveat: solo/learning pace + WSL2 jitter inflate both the schedule and the tail.
+Caveat: solo/learning pace + WSL2 jitter apply.

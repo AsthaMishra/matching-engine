@@ -17,9 +17,7 @@ pub struct AddOrder {
 }
 
 impl AddOrder {
-    pub fn write(&self, ord_e: OrderEvent) -> Vec<u8> {
-        let mut res: Vec<u8> = vec![];
-
+    pub fn write(&self, ord_e: OrderEvent, out: &mut Vec<u8>) {
         match ord_e {
             OrderEvent::Accepted {
                 id,
@@ -50,7 +48,7 @@ impl AddOrder {
                     0u8,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Modified {
                 id: _,
@@ -66,7 +64,7 @@ impl AddOrder {
                     Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Replace {
                 id,
@@ -97,7 +95,7 @@ impl AddOrder {
                     0u8,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Executed(trade) => {
                 let o = outbound::order_executed(
@@ -107,7 +105,7 @@ impl AddOrder {
                     0,
                     trade.id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Canceled {
                 id: _,
@@ -115,7 +113,7 @@ impl AddOrder {
                 reason,
             } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Rejected { id: _, reason } => {
                 let o = outbound::order_rejected(
@@ -123,7 +121,7 @@ impl AddOrder {
                     reason.code() as u16,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::UnknownSymbol { reason } => {
                 let o = outbound::order_rejected(
@@ -131,11 +129,9 @@ impl AddOrder {
                     reason.code() as u16,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
         }
-
-        res
     }
 }
 
@@ -157,9 +153,8 @@ impl ReplaceOrder {
         capacity: char,
         cross_type: u8,
         ord_e: OrderEvent,
-    ) -> Vec<u8> {
-        let mut res: Vec<u8> = vec![];
-
+        out: &mut Vec<u8>,
+    ) {
         match ord_e {
             OrderEvent::Modified {
                 id: _,
@@ -175,7 +170,7 @@ impl ReplaceOrder {
                     Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Replace {
                 id,
@@ -206,7 +201,7 @@ impl ReplaceOrder {
                     0u8,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Executed(trade) => {
                 let o = outbound::order_executed(
@@ -216,7 +211,7 @@ impl ReplaceOrder {
                     0,
                     trade.id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Canceled {
                 id: _,
@@ -224,7 +219,7 @@ impl ReplaceOrder {
                 reason,
             } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Rejected { id: _, reason } => {
                 let o = outbound::order_rejected(
@@ -232,7 +227,7 @@ impl ReplaceOrder {
                     reason.code() as u16,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::UnknownSymbol { reason } => {
                 let o = outbound::order_rejected(
@@ -240,14 +235,12 @@ impl ReplaceOrder {
                     reason.code() as u16,
                     self.ci_ord_id,
                 );
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Accepted { .. } => {
                 unreachable!("replace order cannot result in accepted event")
             }
         }
-
-        res
     }
 }
 
@@ -257,8 +250,8 @@ pub struct CancelOrder {
 }
 
 impl CancelOrder {
-    pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent) -> Vec<u8> {
-        let mut res: Vec<u8> = vec![];
+    pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent, out: &mut Vec<u8>) {
+        let mut out: Vec<u8> = vec![];
         match ord_e {
             OrderEvent::Canceled {
                 id: _,
@@ -266,17 +259,17 @@ impl CancelOrder {
                 reason,
             } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Rejected { id: _, reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::UnknownSymbol { reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Accepted { .. } => {
                 unreachable!("CancelOrder cannot result in Accepted event")
@@ -291,8 +284,6 @@ impl CancelOrder {
                 unreachable!("CancelOrder cannot result in Executed event")
             }
         }
-
-        res
     }
 }
 
@@ -303,9 +294,7 @@ pub struct ModifyOrder {
 }
 
 impl ModifyOrder {
-    pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent) -> Vec<u8> {
-        let mut res: Vec<u8> = vec![];
-
+    pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent, out: &mut Vec<u8>) {
         match ord_e {
             OrderEvent::Modified {
                 id: _,
@@ -321,7 +310,7 @@ impl ModifyOrder {
                     Side::SellShortExempt => b'E',
                 };
                 let o = outbound::order_modified(self.user_ref_num, s, qty as u32);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Canceled {
                 id: _,
@@ -329,17 +318,17 @@ impl ModifyOrder {
                 reason,
             } => {
                 let o = outbound::order_canceled(self.user_ref_num, self.qty as u32, reason.code());
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Rejected { id: _, reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::UnknownSymbol { reason } => {
                 let o =
                     outbound::order_rejected(self.user_ref_num, reason.code() as u16, ci_ord_id);
-                res.extend_from_slice(&o);
+                out.extend_from_slice(&o);
             }
             OrderEvent::Accepted { .. } => {
                 unreachable!("ModifyOrder cannot result in Accepted event")
@@ -349,8 +338,6 @@ impl ModifyOrder {
             }
             OrderEvent::Executed(..) => unreachable!("ModifyOrder cannot result in Executed event"),
         }
-
-        res
     }
 }
 

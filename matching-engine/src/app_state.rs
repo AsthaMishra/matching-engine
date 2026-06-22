@@ -5,6 +5,7 @@ use std::{
 
 use crossbeam_channel::Sender;
 use crossbeam_queue::ArrayQueue;
+use matching_core::order_book::OrderBook;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{BookRequest, BookResponse, Exchange, SymbolRegistry};
@@ -31,6 +32,19 @@ impl AppState {
             senders: Arc::new(exchange.senders),
             symbol_registery: Arc::new(RwLock::new(symbol_registry)),
             slot_pool: Arc::new(pool),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Book {
+    pub book: Arc<OrderBook>,
+}
+
+impl Book {
+    pub fn new(book: OrderBook) -> Self {
+        Self {
+            book: Arc::new(book),
         }
     }
 }

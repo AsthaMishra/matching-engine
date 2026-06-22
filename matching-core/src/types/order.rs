@@ -9,7 +9,7 @@ pub struct Order {
     pub price: i64,
     pub qty: u64,
     pub remaining_qty: u64,
-    pub timestamp: u64,
+    // pub timestamp: u64,
     pub active: bool,
 }
 
@@ -23,7 +23,7 @@ impl Default for Order {
             price: 0,
             qty: 0,
             remaining_qty: 0,
-            timestamp: 0,
+            // timestamp: 0,
             active: false,
         }
     }
@@ -39,7 +39,7 @@ impl Order {
         price: i64,
         qty: u64,
         remaining_qty: u64,
-        timestamp: u64,
+        // timestamp: u64,
     ) -> Self {
         Self {
             id,
@@ -49,7 +49,7 @@ impl Order {
             price,
             qty,
             remaining_qty,
-            timestamp,
+            // timestamp,
             active: true,
         }
     }

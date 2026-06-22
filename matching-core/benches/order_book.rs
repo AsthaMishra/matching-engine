@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use matching_core::{
-    match_order,
+    match_order, match_order_into,
     order_book::OrderBook,
     types::{CommandType, Order, OrderType, Side},
 };
@@ -15,7 +15,7 @@ fn make_order(
     price: i64,
     qty: u64,
 ) -> Order {
-    Order::new(id, trader_id, side, order_type, price, qty, qty, 0)
+    Order::new(id, trader_id, side, order_type, price, qty, qty)
 }
 
 // Build a book with `depth` price levels on each side, 1 order per level.
@@ -197,16 +197,19 @@ fn bench_throughput(c: &mut Criterion) {
     group.bench_function("insert_no_match", |b| {
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
+            let mut out = Vec::new();
             for _ in 0..iters {
                 let mut book = OrderBook::new();
                 let t = Instant::now();
                 for price in 1i64..=200 {
                     let id = book.allocate_id();
-                    let _ = black_box(match_order(
+                    match_order_into(
                         &mut book,
                         make_order(id, 1, Side::Buy, OrderType::Limit, price, 10),
                         CommandType::Add,
-                    ));
+                        &mut out,
+                    );
+                    black_box(&out);
                 }
                 total += t.elapsed();
                 drop(book);
@@ -225,16 +228,19 @@ fn bench_throughput(c: &mut Criterion) {
                 // build_book depth=100: bids at 4999..4900, asks at 5001..5100
 
                 let mut book = build_book(100);
+                let mut out = Vec::new(); 
                 let t = Instant::now();
                 // Insert into existing bid levels — price < best_ask so no match, order rests
                 for i in 0..200usize {
                     let price = 5000 - (i as i64 % 100 + 1);
                     let id = book.allocate_id();
-                    let _ = black_box(match_order(
+                    match_order_into(
                         &mut book,
                         make_order(id, 2, Side::Buy, OrderType::Limit, price, 10),
                         CommandType::Add,
-                    ));
+                        &mut out,
+                    );
+                    black_box(&out);
                 }
                 total += t.elapsed();
                 drop(book);
@@ -250,20 +256,24 @@ fn bench_throughput(c: &mut Criterion) {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
                 let mut book = OrderBook::new();
+                let mut out = Vec::new(); 
                 let t = Instant::now();
                 for _ in 0..200 {
                     let maker_id = book.allocate_id();
-                    match_order(
+                    match_order_into(
                         &mut book,
                         make_order(maker_id, 1, Side::Sell, OrderType::Limit, 100, 10),
                         CommandType::Add,
+                        &mut out,
                     );
                     let taker_id = book.allocate_id();
-                    let _ = black_box(match_order(
+                    match_order_into(
                         &mut book,
                         make_order(taker_id, 2, Side::Buy, OrderType::Limit, 100, 10),
                         CommandType::Add,
-                    ));
+                        &mut out,
+                    );
+                    black_box(&out);
                 }
                 total += t.elapsed();
                 drop(book);

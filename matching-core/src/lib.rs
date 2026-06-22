@@ -1,4 +1,4 @@
-// Pure matching core — no threads, no async, no transport.
+// Pure matching core - no threads, no async, no transport.
 // Order books, matching, types, symbol registry, response/result types.
 // The runtime (workers/channels) and transport adapters (REST/OUCH) depend on
 // this crate; this crate depends on none of them.

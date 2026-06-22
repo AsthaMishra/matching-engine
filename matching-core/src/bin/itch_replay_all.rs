@@ -255,7 +255,7 @@ fn replay_symbol(ops: Vec<ReplayOp>) -> (Vec<u64>, SymStats) {
                     price,
                     shares as u64,
                     shares as u64,
-                    0,
+                    // 0,
                 );
                 let t0 = Instant::now();
                 let events = match_order(&mut book, order, CommandType::Add);
@@ -330,7 +330,7 @@ fn replay_symbol(ops: Vec<ReplayOp>) -> (Vec<u64>, SymStats) {
                     price,
                     shares as u64,
                     shares as u64,
-                    0,
+                    // 0,
                 );
                 let t0 = Instant::now();
                 let _ = book.cancel_order(old_id);

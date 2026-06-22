@@ -1,17 +1,28 @@
 use matching_engine::{
-    AppState,
-    types::{OrderEvent, OrderType, Side},
+    match_order_into, matching,
+    order_book::OrderBook,
+    types::{CancelRejectReason, CommandType, Order, OrderEvent, OrderType, Side},
 };
 
 use crate::{InBoundResponse, OrderHandle, Session, inbound};
 
-pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> {
+// `out` (response bytes) and `ev_buf` (engine events) are caller-owned and
+// reused across messages - both are cleared here / by match_order_into, so the
+// hot path does zero per-message allocation in steady state.
+pub fn read(
+    buf: Vec<u8>,
+    book: &mut OrderBook,
+    sess: &mut Session,
+    out: &mut Vec<u8>,
+    ev_buf: &mut Vec<OrderEvent>,
+) -> u64 {
+    out.clear();
     let inbound = inbound::parse_enter_order(&buf[1..]).unwrap();
-    let mut res: Vec<u8> = vec![];
+    let mut eng_ns: u64 = 0;
 
     match inbound {
-        InBoundResponse::Enter(add_order) => {
-            let s: Side = match add_order.side {
+        InBoundResponse::Enter(a_o) => {
+            let s: Side = match a_o.side {
                 b'B' => Side::Buy,
                 b'S' => Side::Sell,
                 b'T' => Side::SellShort,
@@ -19,7 +30,7 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                 _ => Side::Buy,
             };
 
-            let ord_type = match add_order.time_in_force {
+            let ord_type = match a_o.time_in_force {
                 b'0' => OrderType::Limit,
                 b'3' => OrderType::IOC,
                 b'5' => OrderType::FOK,
@@ -27,104 +38,112 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
                 _ => OrderType::Limit,
             };
 
-            let Some(symbol_id) = state
-                .symbol_registery
-                .read()
-                .unwrap()
-                .look_up(add_order.symbol)
-            else {
-                return res;
-            };
-
-            let Some(sender) = state.senders.get(&symbol_id).cloned() else {
-                unreachable!(
-                    "symbol_id {symbol_id} in registry but no sender — registry/senders desynced"
-                );
-            };
-
-            let o_res = matching_engine::client::add_order(
-                state,
-                add_order.symbol,
-                sess.session_id as u32,
+            let order = Order::new(
+                book.allocate_id(),
+                sess.session_id,
                 s,
-                add_order.price,
-                add_order.qty,
                 ord_type,
-                add_order.time_in_force,
-            )
-            .await;
+                a_o.price as i64,
+                a_o.qty as u64,
+                a_o.qty as u64,
+                // now_nanos(),
+            );
 
-            let data = o_res.data;
+            let eng_t = std::time::Instant::now();
+            match_order_into(book, order, CommandType::Add, ev_buf);
+            eng_ns = eng_t.elapsed().as_nanos() as u64;
 
-            for r in data {
-                if let OrderEvent::Accepted { id, .. } = &r {
+            for ev in ev_buf.drain(..) {
+                if let OrderEvent::Accepted { id, .. } = &ev {
                     sess.map.insert(
-                        add_order.user_ref_num,
+                        a_o.user_ref_num,
                         OrderHandle {
-                            sender: sender.clone(),
                             order_id: *id as usize,
-                            symbol: add_order.symbol,
-                            capacity: add_order.capacity,
-                            cross_type: add_order.cross_type,
-                            ci_ord_id: add_order.ci_ord_id,
+                            symbol: a_o.symbol,
+                            capacity: a_o.capacity,
+                            cross_type: a_o.cross_type,
+                            ci_ord_id: a_o.ci_ord_id,
                         },
                     );
                 }
-                let buf = add_order.write(r);
-                res.extend_from_slice(&buf);
+                a_o.write(ev, out)
             }
         }
-        InBoundResponse::Replace(replace_order) => {
-            let Some(ord_h) = sess.map.get(&replace_order.user_ref_num) else {
-                return res;
+        InBoundResponse::Replace(r_o) => {
+            let Some(ord_h) = sess.map.get(&r_o.user_ref_num) else {
+                return eng_ns;
             };
-            let o_res = matching_engine::client::replace_order(
-                state,
-                ord_h.symbol,
-                ord_h.order_id.try_into().unwrap(),
-                replace_order.price,
-                replace_order.qty,
-            )
-            .await;
 
-            let data = o_res.data;
+            let events =
+                matching::replace_order(book, ord_h.order_id, r_o.price as i64, r_o.qty as u64);
 
-            for r in data {
-                let buf = replace_order.write(ord_h.symbol, ord_h.capacity, ord_h.cross_type, r);
-                res.extend_from_slice(&buf);
+            match events {
+                Ok(evs) => {
+                    for ev in evs {
+                        r_o.write(ord_h.symbol, ord_h.capacity, ord_h.cross_type, ev, out);
+                    }
+                }
+                Err(_) => {
+                    r_o.write(
+                        [0u8; 8],
+                        '0',
+                        0,
+                        OrderEvent::Rejected {
+                            id: ord_h.order_id,
+                            reason: CancelRejectReason::OrderNotActive,
+                        },
+                        out,
+                    );
+                }
             }
         }
-        InBoundResponse::Cancel(cancel_order) => {
-            let Some(ord_h) = sess.map.get(&cancel_order.user_ref_num) else {
-                return res;
+        InBoundResponse::Cancel(c_o) => {
+            let Some(ord_h) = sess.map.get(&c_o.user_ref_num) else {
+                return eng_ns;
             };
-            let o_res = matching_engine::client::cancel_order(
-                state,
-                ord_h.symbol,
-                ord_h.order_id.try_into().unwrap(),
-            )
-            .await;
 
-            let r = o_res.data;
-
-            let buf = cancel_order.write(ord_h.ci_ord_id, r);
-            res.extend_from_slice(&buf);
+            let ev_r = book.cancel_order(ord_h.order_id);
+            match ev_r {
+                Ok(ev) => {
+                    c_o.write(ord_h.ci_ord_id, ev, out);
+                }
+                Err(_) => {
+                    c_o.write(
+                        [0u8; 14],
+                        OrderEvent::Rejected {
+                            id: ord_h.order_id,
+                            reason: CancelRejectReason::OrderNotActive,
+                        },
+                        out,
+                    );
+                }
+            }
         }
-        InBoundResponse::Modify(modify_order) => {
-            let Some(ord_h) = sess.map.get(&modify_order.user_ref_num) else {
-                return res;
+        InBoundResponse::Modify(m_o) => {
+            let Some(ord_h) = sess.map.get(&m_o.user_ref_num) else {
+                return eng_ns;
             };
-            let o_res = matching_engine::client::modify_order(
-                state,
-                ord_h.symbol,
-                ord_h.order_id.try_into().unwrap(),
-                modify_order.qty,
-            )
-            .await;
 
-            for r in o_res.data {
-                let buf = modify_order.write(ord_h.ci_ord_id, r);
-                res.extend_from_slice(&buf);
+            let eng_t = std::time::Instant::now();
+            let events = matching::modify_order(book, ord_h.order_id, m_o.qty as u64);
+            eng_ns = eng_t.elapsed().as_nanos() as u64;
+
+            match events {
+                Ok(evs) => {
+                    for ev in evs {
+                        m_o.write(ord_h.ci_ord_id, ev, out);
+                    }
+                }
+                Err(_) => {
+                    m_o.write(
+                        [0u8; 14],
+                        OrderEvent::Rejected {
+                            id: ord_h.order_id,
+                            reason: CancelRejectReason::OrderNotActive,
+                        },
+                        out,
+                    );
+                }
             }
         }
         InBoundResponse::MassCancel(_mass_cancel_order) => todo!(),
@@ -133,5 +152,5 @@ pub async fn read(buf: Vec<u8>, state: AppState, sess: &mut Session) -> Vec<u8> 
         InBoundResponse::Query(_query_account) => todo!(),
     };
 
-    res
+    eng_ns
 }

@@ -37,3 +37,4 @@ pub fn str_to_symbol(s: &str) -> [u8; 8] {
     buf[..len].copy_from_slice(&b[..len]);
     buf
 }
+

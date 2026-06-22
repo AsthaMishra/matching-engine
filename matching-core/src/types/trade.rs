@@ -10,7 +10,7 @@ pub struct Trade {
     pub price: i64,            // price the trade executed at (maker's price)
     pub qty: u64,              // quantity filled
     pub side: Side,            // taker's side (bid = buyer aggressed, ask = seller aggressed)
-    pub timestamp: u64,        // when the match happened
+                               // pub timestamp: u64,        // when the match happened
 }
 
 impl Trade {
@@ -21,7 +21,7 @@ impl Trade {
         price: i64,
         qty: u64,
         side: Side,
-        timestamp: u64,
+        // timestamp: u64,
     ) -> Self {
         Self {
             id,
@@ -30,7 +30,7 @@ impl Trade {
             price,
             qty,
             side,
-            timestamp,
+            // timestamp,
         }
     }
 }

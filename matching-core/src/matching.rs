@@ -9,31 +9,38 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRADE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-pub fn match_order(
+/// Match `incoming` against `book`, appending the resulting events into `out`.
+/// `out` is cleared first, so a caller can reuse one buffer forever → zero
+/// allocation in steady state. (`match_order` is the allocating convenience
+/// wrapper below.)
+pub fn match_order_into(
     book: &mut OrderBook,
     mut incoming: Order,
     c_type: CommandType,
-) -> Vec<OrderEvent> {
-    let mut ord_event: Vec<OrderEvent> = Vec::default();
+    out: &mut Vec<OrderEvent>,
+) {
+    out.clear();
 
     match incoming.order_type {
         OrderType::Limit | OrderType::IOC => {
             if let Err(e) = price_to_idx(incoming.price) {
                 eprintln!("rejecting order {}: {e}", incoming.id);
-                return vec![OrderEvent::Rejected {
+                out.push(OrderEvent::Rejected {
                     id: incoming.id,
                     reason: CancelRejectReason::InvalidPrice,
-                }];
+                });
+                return;
             }
         }
         OrderType::Market | OrderType::FOK => {}
     }
 
     if incoming.order_type == OrderType::FOK && !can_fully_fill(book, &incoming) {
-        return vec![OrderEvent::Rejected {
+        out.push(OrderEvent::Rejected {
             id: incoming.id,
             reason: CancelRejectReason::OrderCannotFullyFill,
-        }];
+        });
+        return;
     }
 
     match incoming.side {
@@ -98,14 +105,14 @@ pub fn match_order(
                         idx += 1;
                     }
 
-                    ord_event.push(OrderEvent::Executed(Trade {
+                    out.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
                         taker_order_id: incoming.id,
                         price: pl.price,
                         qty: fill_qty,
                         side: incoming.side,
-                        timestamp: now_nanos(),
+                        // timestamp: now_nanos(),
                     }));
                 }
 
@@ -125,14 +132,14 @@ pub fn match_order(
                 match incoming.order_type {
                     OrderType::Limit => match book.place_order(incoming) {
                         Ok((id, side, p, qty, r_qty)) => match c_type {
-                            CommandType::Add => ord_event.push(OrderEvent::Accepted {
+                            CommandType::Add => out.push(OrderEvent::Accepted {
                                 id,
                                 side,
                                 price: p,
                                 qty,
                                 remaining_qty: r_qty,
                             }),
-                            CommandType::Replace => ord_event.push(OrderEvent::Replace {
+                            CommandType::Replace => out.push(OrderEvent::Replace {
                                 id,
                                 side,
                                 price: p,
@@ -204,14 +211,14 @@ pub fn match_order(
                         idx += 1;
                     }
 
-                    ord_event.push(OrderEvent::Executed(Trade {
+                    out.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
                         taker_order_id: incoming.id,
                         price: pl.price,
                         qty: fill_qty,
                         side: incoming.side,
-                        timestamp: now_nanos(),
+                        // timestamp: now_nanos(),
                     }));
                 }
 
@@ -229,14 +236,14 @@ pub fn match_order(
                 match incoming.order_type {
                     OrderType::Limit => match book.place_order(incoming) {
                         Ok((id, side, p, qty, r_qty)) => match c_type {
-                            CommandType::Add => ord_event.push(OrderEvent::Accepted {
+                            CommandType::Add => out.push(OrderEvent::Accepted {
                                 id,
                                 side,
                                 price: p,
                                 qty,
                                 remaining_qty: r_qty,
                             }),
-                            CommandType::Replace => ord_event.push(OrderEvent::Replace {
+                            CommandType::Replace => out.push(OrderEvent::Replace {
                                 id,
                                 side,
                                 price: p,
@@ -255,8 +262,14 @@ pub fn match_order(
         Side::SellShort => todo!(),
         Side::SellShortExempt => todo!(),
     }
+}
 
-    ord_event
+/// Allocating convenience wrapper. Hot paths should call `match_order_into`
+/// with a reused buffer instead.
+pub fn match_order(book: &mut OrderBook, incoming: Order, c_type: CommandType) -> Vec<OrderEvent> {
+    let mut out = Vec::new();
+    match_order_into(book, incoming, c_type, &mut out);
+    out
 }
 
 fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
@@ -312,6 +325,20 @@ fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
     }
 
     false
+}
+
+pub fn modify_order(
+    book: &mut OrderBook,
+    order_id: usize,
+    new_qty: u64,
+) -> Result<Vec<OrderEvent>, Box<dyn std::error::Error>> {
+    let Some(&(_, price, _, _)) = book.order_index.get(order_id).and_then(|o| o.as_ref()) else {
+        return Ok(vec![OrderEvent::Rejected {
+            id: order_id,
+            reason: CancelRejectReason::OrderIdNotFound,
+        }]);
+    };
+    replace_order(book, order_id, price, new_qty)
 }
 
 pub fn replace_order(
@@ -405,14 +432,8 @@ pub fn replace_order(
 
     book.cancel_order(order_id)?;
     let new_order = Order::new(
-        order_id,
-        trader_id,
-        side,
-        order_type,
-        new_price,
-        new_qty,
-        new_qty,
-        now_nanos(),
+        order_id, trader_id, side, order_type, new_price, new_qty, new_qty,
+        // now_nanos(),
     );
 
     let trades = match_order(book, new_order, CommandType::Replace);

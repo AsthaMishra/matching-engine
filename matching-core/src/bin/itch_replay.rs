@@ -272,7 +272,7 @@ fn replay(ops: Vec<ReplayOp>) -> (Vec<u64>, ReplayStats) {
                     price_cents,
                     shares as u64,
                     shares as u64,
-                    0,
+                    // 0,
                 );
 
                 let t0 = Instant::now();
@@ -359,7 +359,7 @@ fn replay(ops: Vec<ReplayOp>) -> (Vec<u64>, ReplayStats) {
                     price_cents,
                     shares as u64,
                     shares as u64,
-                    0,
+                    // 0,
                 );
 
                 let t0 = Instant::now();
