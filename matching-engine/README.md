@@ -25,7 +25,7 @@ caller (async) ──crossbeam send(BookRequest{slot_id})──► worker thread
 3. Send `BookRequest { slot_id }`; `rx.recv().await`.
 4. Worker replies on `response_txs[slot_id]`; push the slot back.
 
-This is the synchronous request/response path (good for resting orders). The matched-flow async-egress path is the next milestone — see [`CONTEXT.md`](../CONTEXT.md).
+This is the synchronous request/response path (good for resting orders). The matched-flow async-egress path is the next milestone — see [`PLAN.md`](../PLAN.md).
 
 > ⚠️ Invariant: `senders` is immutable but the symbol registry is mutable. Holds today because all symbols register at startup; breaks if symbols are ever registered dynamically.
 

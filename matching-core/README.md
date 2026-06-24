@@ -62,4 +62,4 @@ cargo test
 cargo +nightly fuzz run engine_fuzz   # requires nightly
 ```
 
-See [optimization_notes.md](../matching-engine/optimization_notes.md) for the full stage-by-stage progression.
+See [optimization_notes.md](optimization_notes.md) for the full stage-by-stage progression.

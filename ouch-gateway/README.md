@@ -28,7 +28,7 @@ cargo run --release -p ouch-gateway --bin load_client -- 1000000 # 1M-order load
 RUST_LOG=ouch_gateway=debug cargo run --release -p server        # verbose
 ```
 
-> Measured on WSL2 - VM scheduler jitter inflates the tail. Reducing the p99/p99.9 tail is the current work phase ([`CONTEXT.md`](../CONTEXT.md)).
+> Measured on WSL2 - VM scheduler jitter inflates the tail. Reducing the p99/p99.9 tail is the current work phase ([`PLAN.md`](../PLAN.md)).
 
 ## Dependencies
 
