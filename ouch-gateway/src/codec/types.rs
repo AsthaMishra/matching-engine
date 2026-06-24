@@ -251,7 +251,6 @@ pub struct CancelOrder {
 
 impl CancelOrder {
     pub fn write(&self, ci_ord_id: [u8; 14], ord_e: OrderEvent, out: &mut Vec<u8>) {
-        let mut out: Vec<u8> = vec![];
         match ord_e {
             OrderEvent::Canceled {
                 id: _,

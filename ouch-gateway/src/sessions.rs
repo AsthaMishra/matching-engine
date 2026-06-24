@@ -144,7 +144,7 @@ fn login_reject(reject_code: u8) -> [u8; 4] {
 }
 
 // Log p50/p99/p99.9 for each segment (ns), so the tail can be localized.
-fn report_latency(
+pub(crate) fn report_latency(
     session_id: u64,
     svc: &Histogram<u64>,
     eng: &Histogram<u64>,

@@ -1,7 +1,9 @@
 [workspace]
-members = ["matching-core",
+members = [
+    "matching-core",
     "matching-engine",
-    "ouch-gateway", "rest-gateway",
+    "ouch-gateway",
+    "rest-gateway",
     "server",
 ]
 resolver = "2"
