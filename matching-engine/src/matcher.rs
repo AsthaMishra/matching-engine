@@ -134,8 +134,7 @@ pub fn dispatch(req: BookRequest, book: &mut OrderBook, response_txs: &[Sender<B
                 order_type,
                 price,
                 qty,
-                qty,
-                now_nanos(),
+                qty
             );
             let _ = response_txs[slot_id].blocking_send(BookResponse::trades(match_order(
                 book,

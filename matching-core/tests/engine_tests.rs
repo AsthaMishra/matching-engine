@@ -32,19 +32,19 @@ fn modify_trades(book: &mut OrderBook, id: usize, price: i64, qty: u64) -> Vec<T
 }
 
 fn lim(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::Limit, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::Limit, price, qty, qty)
 }
 
 fn mkt(id: usize, trader: u64, side: Side, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::Market, 0, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::Market, 0, qty, qty)
 }
 
 fn ioc(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::IOC, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::IOC, price, qty, qty)
 }
 
 fn fok(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::FOK, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::FOK, price, qty, qty)
 }
 
 // Place a resting limit order directly (no matching attempted — use for setup).
@@ -821,7 +821,7 @@ fn microprice_empty_book_is_none() {
 fn place_order_zero_price_rejected() {
     let mut book = OrderBook::new();
     let id = book.allocate_id();
-    let result = book.place_order(Order::new(id, 1, Side::Buy, OrderType::Limit, 0, 10, 10, 0));
+    let result = book.place_order(Order::new(id, 1, Side::Buy, OrderType::Limit, 0, 10, 10));
     assert!(result.is_err());
 }
 
@@ -839,7 +839,6 @@ fn place_order_max_price_rejected() {
         MAX_PRICE,
         10,
         10,
-        0,
     ));
     assert!(result.is_err());
 }

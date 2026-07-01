@@ -19,6 +19,7 @@ pub struct AppState {
     pub senders: Arc<HashMap<u32, BookSender>>,
     pub symbol_registery: Arc<RwLock<SymbolRegistry>>,
     pub slot_pool: Arc<ArrayQueue<(usize, Receiver<BookResponse>)>>,
+    // pub book: OrderBook,
 }
 
 impl AppState {

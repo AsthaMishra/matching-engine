@@ -28,19 +28,19 @@ fn nonzero_qty() -> impl Strategy<Value = u64> {
 }
 
 fn make_limit(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::Limit, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::Limit, price, qty, qty)
 }
 
 fn make_market(id: usize, trader: u64, side: Side, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::Market, 1, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::Market, 1, qty, qty)
 }
 
 fn make_ioc(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::IOC, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::IOC, price, qty, qty)
 }
 
 fn make_fok(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
-    Order::new(id, trader, side, OrderType::FOK, price, qty, qty, 0)
+    Order::new(id, trader, side, OrderType::FOK, price, qty, qty)
 }
 
 // ── Property 1: filled qty == min(bid, ask) for a crossing pair ───────────────

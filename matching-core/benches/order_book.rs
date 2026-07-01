@@ -15,7 +15,7 @@ fn make_order(
     price: i64,
     qty: u64,
 ) -> Order {
-    Order::new(id, trader_id, side, order_type, price, qty, qty, 0)
+    Order::new(id, trader_id, side, order_type, price, qty, qty)
 }
 
 // Build a book with `depth` price levels on each side, 1 order per level.

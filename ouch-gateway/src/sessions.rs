@@ -1,12 +1,16 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
 use hdrhistogram::Histogram;
-use matching_engine::{AppState, BookSender};
+use io_uring::{IoUring, opcode, types::Timespec};
+use matching_engine::{AppState, BookSender, order_book::OrderBook};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
@@ -18,7 +22,7 @@ use tokio::{
 use crate::gateway;
 
 pub struct OrderHandle {
-    pub sender: BookSender,
+    // pub sender: BookSender,
     pub order_id: usize,
     pub symbol: [u8; 8],
     pub capacity: char,
@@ -33,16 +37,17 @@ pub struct Session {
     pub map: HashMap<u32, OrderHandle>, // user_ref_num -> detail
 }
 
-pub async fn run(state: AppState) {
+pub async fn run() -> std::io::Result<()> {
     let l = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let book = Arc::new(Mutex::new(OrderBook::new()));
     loop {
         let (stream, peer_addr) = l.accept().await.unwrap();
-        let state = state.clone();
-        tokio::spawn(session(stream, peer_addr, state));
+        let b = book.clone();
+        // tokio::spawn(session(stream, peer_addr, &mut book));
     }
 }
 
-pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppState) {
+pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, book: &mut OrderBook) {
     // Disable Nagle: without this, small response writes get coalesced and
     // collide with the client's delayed ACKs -> periodic ~40ms stalls.
     let _ = stream.set_nodelay(true);
@@ -105,6 +110,10 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
         Duration::from_secs(5),
     );
 
+    // Reused across messages — zero per-message allocation in steady state.
+    let mut out: Vec<u8> = Vec::new();
+    let mut ev_buf = Vec::new();
+
     loop {
         tokio::select! {
             msg = read_packet(&mut reader) => {
@@ -122,9 +131,9 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, state: AppSta
                     b'U' => {} // unsequenced packets
                     b'S' => {
                         let t0 = std::time::Instant::now();
-                        let o = gateway::read(msg, state.clone(), &mut sess).await;
+                        let eng_ns = gateway::read(msg, book, &mut sess, &mut out, &mut ev_buf);
                         let t1 = std::time::Instant::now();
-                        let _ = writer.write_all(&o).await;
+                        let _ = writer.write_all(&out).await;
                         let t2 = std::time::Instant::now();
                         // record only - no logging on the hot path
                         svc.saturating_record(t1.duration_since(t0).as_nanos() as u64);

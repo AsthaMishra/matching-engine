@@ -10,3 +10,4 @@ matching-engine = { path = "../matching-engine" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hdrhistogram = "7"
+io-uring = "0.7"

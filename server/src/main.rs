@@ -2,8 +2,7 @@ use matching_engine::{AppState, Exchange, SymbolRegistry, str_to_symbol};
 use ouch_gateway::sessions;
 
 #[tokio::main]
-async fn main() {
-    
+async fn main()  -> std::io::Result<()>{
     // Diagnostics only — defaults to `info`, override with e.g. RUST_LOG=ouch_gateway=debug.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -12,11 +11,11 @@ async fn main() {
         )
         .init();
 
-    let (mut exchange, pool) = Exchange::new();
-    let mut symbol_registry = SymbolRegistry::new();
-    exchange.register_symbol(symbol_registry.register(str_to_symbol("AAPL")));
+    // let (mut exchange, pool) = Exchange::new();
+    // let mut symbol_registry = SymbolRegistry::new();
+    // exchange.register_symbol(symbol_registry.register(str_to_symbol("AAPL")));
 
-    let state = AppState::new(exchange, symbol_registry, pool);
+    // let state = AppState::new(exchange, symbol_registry, pool);
 
     // REST adapter on the shared engine (HTTP, port 8081).
     // let rest_state = state.clone();
@@ -34,5 +33,5 @@ async fn main() {
 
     // Both front doors, one set of books.
     // tokio::join!(rest, ouch);
-    sessions::run(state).await;
+    sessions::run().await
 }
