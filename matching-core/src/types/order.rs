@@ -7,8 +7,8 @@ pub struct Order {
     pub side: Side,
     pub order_type: OrderType,
     pub price: i64,
-    pub qty: u64,
-    pub remaining_qty: u64,
+    pub qty: u32,
+    pub remaining_qty: u32,
     pub active: bool,
 }
 
@@ -35,8 +35,8 @@ impl Order {
         side: Side,
         order_type: OrderType,
         price: i64,
-        qty: u64,
-        remaining_qty: u64,
+        qty: u32,
+        remaining_qty: u32,
     ) -> Self {
         Self {
             id,

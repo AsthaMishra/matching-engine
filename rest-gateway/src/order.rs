@@ -12,7 +12,7 @@ pub struct AddOrderRequestParams {
     pub order_type: OrderType,
     pub side: Side,
     pub price: i64,
-    pub qty: u64,
+    pub qty: u32,
 }
 
 pub async fn add_order(
@@ -53,7 +53,7 @@ pub struct UpdateOrderRequestParams {
     pub order_id: usize,
     pub symbol: String,
     pub new_price: i64,
-    pub new_qty: u64,
+    pub new_qty: u32,
 }
 
 pub async fn update_order(

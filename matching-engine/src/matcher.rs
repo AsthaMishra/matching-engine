@@ -17,7 +17,7 @@ pub enum BookRequest {
         side: Side,
         order_type: OrderType,
         price: i64,
-        qty: u64,
+        qty: u32,
         slot_id: usize,
     },
     Cancel {
@@ -26,13 +26,13 @@ pub enum BookRequest {
     },
     Modify {
         order_id: usize,
-        qty: u64,
+        qty: u32,
         slot_id: usize,
     },
     Replace {
         order_id: usize,
         price: i64,
-        qty: u64,
+        qty: u32,
         slot_id: usize,
     },
     Bbo {
@@ -134,7 +134,7 @@ pub fn dispatch(req: BookRequest, book: &mut OrderBook, response_txs: &[Sender<B
                 order_type,
                 price,
                 qty,
-                qty
+                qty,
             );
             let _ = response_txs[slot_id].blocking_send(BookResponse::trades(match_order(
                 book,

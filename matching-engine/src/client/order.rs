@@ -30,7 +30,7 @@ pub async fn add_order(
         side,
         order_type: ord_type,
         price: price as i64,
-        qty: u64::from(qty),
+        qty: qty,
         slot_id,
     });
 
@@ -66,7 +66,7 @@ pub async fn replace_order(
         slot_id,
         order_id: order_id as usize,
         price: price as i64,
-        qty: qty as u64,
+        qty: qty,
     });
 
     let resp = rx.recv().await.unwrap();
@@ -99,7 +99,7 @@ pub async fn modify_order(
     let _ = sender.send(BookRequest::Modify {
         slot_id,
         order_id: order_id as usize,
-        qty: qty as u64,
+        qty: qty,
     });
 
     let resp = rx.recv().await.unwrap();

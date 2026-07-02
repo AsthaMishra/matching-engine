@@ -20,7 +20,7 @@ fn match_trades(book: &mut OrderBook, order: Order) -> Vec<Trade> {
 }
 
 // Same idea for modify: keep only the executions triggered by the modify.
-fn modify_trades(book: &mut OrderBook, id: usize, price: i64, qty: u64) -> Vec<Trade> {
+fn modify_trades(book: &mut OrderBook, id: usize, price: i64, qty: u32) -> Vec<Trade> {
     replace_order(book, id, price, qty)
         .unwrap()
         .into_iter()
@@ -31,24 +31,24 @@ fn modify_trades(book: &mut OrderBook, id: usize, price: i64, qty: u64) -> Vec<T
         .collect()
 }
 
-fn lim(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn lim(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::Limit, price, qty, qty)
 }
 
-fn mkt(id: usize, trader: u64, side: Side, qty: u64) -> Order {
+fn mkt(id: usize, trader: u64, side: Side, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::Market, 0, qty, qty)
 }
 
-fn ioc(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn ioc(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::IOC, price, qty, qty)
 }
 
-fn fok(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn fok(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::FOK, price, qty, qty)
 }
 
 // Place a resting limit order directly (no matching attempted — use for setup).
-fn rest_bid(book: &mut OrderBook, trader: u64, price: i64, qty: u64) -> usize {
+fn rest_bid(book: &mut OrderBook, trader: u64, price: i64, qty: u32) -> usize {
     let id = book.allocate_id();
 
     let o = lim(id, trader, Side::Buy, price, qty);
@@ -57,7 +57,7 @@ fn rest_bid(book: &mut OrderBook, trader: u64, price: i64, qty: u64) -> usize {
     id
 }
 
-fn rest_ask(book: &mut OrderBook, trader: u64, price: i64, qty: u64) -> usize {
+fn rest_ask(book: &mut OrderBook, trader: u64, price: i64, qty: u32) -> usize {
     let id = book.allocate_id();
 
     let o = lim(id, trader, Side::Sell, price, qty);

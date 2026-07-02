@@ -30,7 +30,7 @@ pub struct OrderBook {
     //key - price , value - price_level
     pub bid: Vec<Option<PriceLevel>>,
     pub ask: Vec<Option<PriceLevel>>,
-    pub order_index: Vec<Option<(Side, i64, u64, usize)>>, //usize -> index -> order_id -> (side,price, qty, order_idx of orders in price_level)
+    pub order_index: Vec<Option<(Side, i64, u32, usize)>>, //usize -> index -> order_id -> (side,price, qty, order_idx of orders in price_level)
 
     pub bid_bitmap: Vec<u64>, // 1 bit per price slot, 64 slots per u64
     pub ask_bitmap: Vec<u64>, // 100_000 / 64 = 1563 u64 values
@@ -64,7 +64,7 @@ impl OrderBook {
     pub fn place_order(
         &mut self,
         order: Order,
-    ) -> Result<(usize, Side, i64, u64, u64), Box<dyn std::error::Error>> {
+    ) -> Result<(usize, Side, i64, u32, u32), Box<dyn std::error::Error>> {
         let price_idx: usize = price_to_idx(order.price)?;
 
         if order.id >= self.order_index.len() {
@@ -89,7 +89,7 @@ impl OrderBook {
 
             match &mut price_level[price_idx] {
                 Some(pl) => {
-                    pl.total_qty += order.remaining_qty;
+                    pl.total_qty += order.remaining_qty as u64;
                     pl.active_count += 1;
                     pl.orders.push(order);
                     self.order_index[id] = Some((side, p, qty, pl.orders.len() - 1));
@@ -105,7 +105,7 @@ impl OrderBook {
                     *slot = Some(PriceLevel::new(
                         // self.arena,
                         order.price,
-                        order.remaining_qty,
+                        order.remaining_qty as u64,
                         order,
                     ));
                     self.order_index[id] = Some((side, p, qty, 0));
@@ -138,7 +138,7 @@ impl OrderBook {
     pub fn update_order(
         &mut self,
         order_id: usize,
-        new_qty: u64,
+        new_qty: u32,
     ) -> Result<OrderEvent, Box<dyn std::error::Error>> {
         let Some(&(side, old_price, _old_qty, o_idx)) =
             self.order_index.get(order_id).and_then(|o| o.as_ref())
@@ -179,7 +179,7 @@ impl OrderBook {
                     .remaining_qty
                     .checked_sub(new_qty)
                     .ok_or("new_qty exceeds order remaining_qty")?;
-                l.total_qty -= discard_qty;
+                l.total_qty -= discard_qty as u64;
                 order.qty = new_qty;
                 order.remaining_qty = new_qty;
             }
@@ -232,7 +232,7 @@ impl OrderBook {
                 // return Err("internal: order is not active in price level".into());
             }
 
-            price_level.total_qty -= order.remaining_qty;
+            price_level.total_qty -= order.remaining_qty as u64;
             order.active = false;
             price_level.active_count -= 1;
 
@@ -451,7 +451,7 @@ impl OrderBook {
         Some(bid.price as f64 * (a_qty / t_qty) + ask.price as f64 * (b_qty / t_qty))
     }
 
-    pub fn get_order_by_id(&self, id: usize) -> Option<&(Side, i64, u64, usize)> {
+    pub fn get_order_by_id(&self, id: usize) -> Option<&(Side, i64, u32, usize)> {
         self.order_index.get(id).and_then(|o| o.as_ref())
     }
 

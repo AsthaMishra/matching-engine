@@ -23,23 +23,23 @@ fn valid_price() -> impl Strategy<Value = i64> {
     1i64..(MAX_PRICE - 1)
 }
 
-fn nonzero_qty() -> impl Strategy<Value = u64> {
-    1u64..10_000
+fn nonzero_qty() -> impl Strategy<Value = u32> {
+    1u32..10_000
 }
 
-fn make_limit(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn make_limit(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::Limit, price, qty, qty)
 }
 
-fn make_market(id: usize, trader: u64, side: Side, qty: u64) -> Order {
+fn make_market(id: usize, trader: u64, side: Side, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::Market, 1, qty, qty)
 }
 
-fn make_ioc(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn make_ioc(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::IOC, price, qty, qty)
 }
 
-fn make_fok(id: usize, trader: u64, side: Side, price: i64, qty: u64) -> Order {
+fn make_fok(id: usize, trader: u64, side: Side, price: i64, qty: u32) -> Order {
     Order::new(id, trader, side, OrderType::FOK, price, qty, qty)
 }
 
@@ -63,7 +63,7 @@ proptest! {
         let trades = match_trades(&mut book, make_limit(bid_id, 2, Side::Buy, price, bid_qty));
 
         let total_filled: u64 = trades.iter().map(|t| t.qty).sum();
-        prop_assert_eq!(total_filled, bid_qty.min(ask_qty));
+        prop_assert_eq!(total_filled, bid_qty.min(ask_qty) as u64);
     }
 }
 
@@ -73,10 +73,10 @@ proptest! {
     #[test]
     fn partial_fill_bid_remainder_rests(
         price in valid_price(),
-        ask_qty in 1u64..5_000,
+        ask_qty in 1u32..5_000,
         extra   in 1u64..5_000,   // bid_qty = ask_qty + extra, so bid always larger
     ) {
-        let bid_qty = ask_qty + extra;
+        let bid_qty = ask_qty as u64 + extra;
 
         let mut book = OrderBook::new();
 
@@ -84,7 +84,7 @@ proptest! {
         book.place_order(make_limit(ask_id, 1, Side::Sell, price, ask_qty)).unwrap();
 
         let bid_id = book.allocate_id();
-        match_trades(&mut book, make_limit(bid_id, 2, Side::Buy, price, bid_qty));
+        match_trades(&mut book, make_limit(bid_id, 2, Side::Buy, price, bid_qty as u32));
 
         prop_assert_eq!(book.volume_at_price(Side::Buy, price), Some(extra));
         prop_assert!(book.best_ask().is_none());
@@ -95,10 +95,10 @@ proptest! {
     #[test]
     fn partial_fill_ask_remainder_rests(
         price in valid_price(),
-        bid_qty in 1u64..5_000,
+        bid_qty in 1u32..5_000,
         extra   in 1u64..5_000,
     ) {
-        let ask_qty = bid_qty + extra;
+        let ask_qty = bid_qty as u64 + extra;
 
         let mut book = OrderBook::new();
 
@@ -106,7 +106,7 @@ proptest! {
         book.place_order(make_limit(bid_id, 1, Side::Buy, price, bid_qty)).unwrap();
 
         let ask_id = book.allocate_id();
-        match_trades(&mut book, make_limit(ask_id, 2, Side::Sell, price, ask_qty));
+        match_trades(&mut book, make_limit(ask_id, 2, Side::Sell, price, ask_qty as u32));
 
         prop_assert_eq!(book.volume_at_price(Side::Sell, price), Some(extra));
         prop_assert!(book.best_bid().is_none());
@@ -164,7 +164,7 @@ proptest! {
         if trades.is_empty() {
             prop_assert_eq!(total_filled, 0);
         } else {
-            prop_assert_eq!(total_filled, fok_qty);
+            prop_assert_eq!(total_filled, fok_qty as u64);
         }
     }
 }
@@ -313,11 +313,11 @@ proptest! {
 
         prop_assert_eq!(
             book.volume_at_price(Side::Buy, price),
-            Some(qty_a + qty_b)
+            Some((qty_a + qty_b) as u64)
         );
 
         // cancel one — volume decreases correctly
         book.cancel_order(id_a).unwrap();
-        prop_assert_eq!(book.volume_at_price(Side::Buy, price), Some(qty_b));
+        prop_assert_eq!(book.volume_at_price(Side::Buy, price), Some(qty_b as u64) );
     }
 }

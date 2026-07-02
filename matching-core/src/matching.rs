@@ -83,7 +83,7 @@ pub fn match_order_into(
                     }
 
                     if o.trader_id == incoming.trader_id {
-                        pl.total_qty -= o.remaining_qty;
+                        pl.total_qty -= o.remaining_qty as u64;
                         book.order_index[o.id] = None;
                         pl.orders[idx].active = false;
                         pl.active_count -= 1;
@@ -96,7 +96,7 @@ pub fn match_order_into(
 
                     incoming.remaining_qty -= fill_qty;
                     o.remaining_qty -= fill_qty;
-                    pl.total_qty -= fill_qty;
+                    pl.total_qty -= fill_qty as u64;
 
                     if o.remaining_qty == 0 {
                         pl.orders[idx].active = false;
@@ -110,7 +110,7 @@ pub fn match_order_into(
                         maker_order_id,
                         taker_order_id: incoming.id,
                         price: pl.price,
-                        qty: fill_qty,
+                        qty: fill_qty as u64,
                         side: incoming.side,
                     }));
                 }
@@ -189,7 +189,7 @@ pub fn match_order_into(
                     }
 
                     if o.trader_id == incoming.trader_id {
-                        pl.total_qty -= o.remaining_qty;
+                        pl.total_qty -= o.remaining_qty as u64;
                         book.order_index[o.id] = None;
                         pl.orders[idx].active = false;
                         pl.active_count -= 1;
@@ -201,7 +201,7 @@ pub fn match_order_into(
                     let fill_qty = incoming.remaining_qty.min(o.remaining_qty);
                     incoming.remaining_qty -= fill_qty;
                     o.remaining_qty -= fill_qty;
-                    pl.total_qty -= fill_qty;
+                    pl.total_qty -= fill_qty as u64;
 
                     if o.remaining_qty == 0 {
                         pl.orders[idx].active = false;
@@ -215,7 +215,7 @@ pub fn match_order_into(
                         maker_order_id,
                         taker_order_id: incoming.id,
                         price: pl.price,
-                        qty: fill_qty,
+                        qty: fill_qty as u64,
                         side: incoming.side,
                     }));
                 }
@@ -271,7 +271,7 @@ pub fn match_order(book: &mut OrderBook, incoming: Order, c_type: CommandType) -
 }
 
 fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
-    let mut remaining = incoming.qty;
+    let mut remaining = incoming.qty as u64;
 
     match incoming.side {
         Side::Buy => {
@@ -328,7 +328,7 @@ fn can_fully_fill(book: &OrderBook, incoming: &Order) -> bool {
 pub fn modify_order(
     book: &mut OrderBook,
     order_id: usize,
-    new_qty: u64,
+    new_qty: u32,
 ) -> Result<Vec<OrderEvent>, Box<dyn std::error::Error>> {
     let Some(&(_, price, _, _)) = book.order_index.get(order_id).and_then(|o| o.as_ref()) else {
         return Ok(vec![OrderEvent::Rejected {
@@ -343,7 +343,7 @@ pub fn replace_order(
     book: &mut OrderBook,
     order_id: usize,
     new_price: i64,
-    new_qty: u64,
+    new_qty: u32,
 ) -> Result<Vec<OrderEvent>, Box<dyn std::error::Error>> {
     let Some(&(side, old_price, _old_qty, o_idx)) =
         book.order_index.get(order_id).and_then(|o| o.as_ref())

@@ -13,7 +13,7 @@ fn make_order(
     side: Side,
     order_type: OrderType,
     price: i64,
-    qty: u64,
+    qty: u32,
 ) -> Order {
     Order::new(id, trader_id, side, order_type, price, qty, qty)
 }
@@ -121,9 +121,9 @@ fn bench_market_order_sweep(c: &mut Criterion) {
                     for _ in 0..iters {
                         let mut book = build_book(50);
                         // 10 qty per level × levels → sweeps exactly `levels` price levels
-                        let qty = (levels * 10) as u64;
+                        let qty = (levels * 10);
                         let id = book.allocate_id();
-                        let order = make_order(id, 2, Side::Buy, OrderType::Market, 0, qty);
+                        let order = make_order(id, 2, Side::Buy, OrderType::Market, 0, qty as u32);
                         let t = Instant::now();
                         let _ = match_order(&mut book, order, CommandType::Add);
                         total += t.elapsed();

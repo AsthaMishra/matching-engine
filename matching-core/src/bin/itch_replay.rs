@@ -264,15 +264,7 @@ fn replay(ops: Vec<ReplayOp>) -> (Vec<u64>, ReplayStats) {
                 }
 
                 let id = book.allocate_id();
-                let order = Order::new(
-                    id,
-                    0,
-                    side,
-                    OrderType::Limit,
-                    price_cents,
-                    shares as u64,
-                    shares as u64
-                );
+                let order = Order::new(id, 0, side, OrderType::Limit, price_cents, shares, shares);
 
                 let t0 = Instant::now();
                 let events = match_order(&mut book, order, CommandType::Add);
@@ -311,14 +303,14 @@ fn replay(ops: Vec<ReplayOp>) -> (Vec<u64>, ReplayStats) {
                 let Some(&(_side, _price, current_qty, _o_idx)) = book.get_order_by_id(id) else {
                     continue;
                 };
-                let new_qty = current_qty.saturating_sub(cancelled_shares as u64);
+                let new_qty = current_qty.saturating_sub(cancelled_shares);
 
                 let t0 = Instant::now();
                 if new_qty == 0 {
                     let _ = book.cancel_order(id);
                     ref_to_id.remove(&ref_num);
                 } else {
-                    let _ = book.update_order(id, new_qty);
+                    let _ = book.update_order(id, new_qty as u32);
                 }
                 latencies.push(t0.elapsed().as_nanos() as u64);
                 stats.cancels += 1;
@@ -356,8 +348,8 @@ fn replay(ops: Vec<ReplayOp>) -> (Vec<u64>, ReplayStats) {
                     side,
                     OrderType::Limit,
                     price_cents,
-                    shares as u64,
-                    shares as u64,
+                    shares ,
+                    shares,
                 );
 
                 let t0 = Instant::now();
