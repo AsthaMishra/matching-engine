@@ -131,7 +131,7 @@ fn main() {
     let fd = stream.as_raw_fd();
     let mut ring: IoUring = IoUring::builder()
         .setup_sqpoll(2000) // kernel poll thread, park after 2000ms idle
-        // .setup_sqpoll_cpu(5) 
+        // .setup_sqpoll_cpu(5)
         .build(256)
         .expect("failed to init io_uring");
 
@@ -150,10 +150,10 @@ fn main() {
     let wall = Instant::now();
 
     for i in 0..total {
+        let t0 = Instant::now();
+
         let frame = build_order(user_ref);
         user_ref += 1;
-
-        let t0 = Instant::now();
 
         // WRITE: submit the full frame (loop guards against a partial write).
         let mut off = 0;
