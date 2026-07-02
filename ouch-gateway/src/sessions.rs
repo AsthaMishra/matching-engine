@@ -9,8 +9,7 @@ use std::{
 };
 
 use hdrhistogram::Histogram;
-use io_uring::{IoUring, opcode, types::Timespec};
-use matching_engine::{AppState, BookSender, order_book::OrderBook};
+use matching_engine::order_book::OrderBook;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
@@ -19,29 +18,13 @@ use tokio::{
     },
 };
 
-use crate::gateway;
-
-pub struct OrderHandle {
-    // pub sender: BookSender,
-    pub order_id: usize,
-    pub symbol: [u8; 8],
-    pub capacity: char,
-    pub cross_type: u8,
-    pub ci_ord_id: [u8; 14],
-}
-
-pub struct Session {
-    pub username: [u8; 6],
-    pub session_id: u64, // internal handle
-    pub next_seq: u64,
-    pub map: HashMap<u32, OrderHandle>, // user_ref_num -> detail
-}
+use crate::{Session, gateway};
 
 pub async fn run() -> std::io::Result<()> {
     let l = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     let book = Arc::new(Mutex::new(OrderBook::new()));
     loop {
-        let (stream, peer_addr) = l.accept().await.unwrap();
+        let (_stream, _peer_addr) = l.accept().await.unwrap();
         let b = book.clone();
         // tokio::spawn(session(stream, peer_addr, &mut book));
     }
@@ -131,7 +114,7 @@ pub async fn session(mut stream: TcpStream, peer_addr: SocketAddr, book: &mut Or
                     b'U' => {} // unsequenced packets
                     b'S' => {
                         let t0 = std::time::Instant::now();
-                        let eng_ns = gateway::read(msg, book, &mut sess, &mut out, &mut ev_buf);
+                        let eng_ns = gateway::read(&msg, book, &mut sess, &mut out, &mut ev_buf);
                         let t1 = std::time::Instant::now();
                         let _ = writer.write_all(&out).await;
                         let t2 = std::time::Instant::now();

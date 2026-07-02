@@ -10,7 +10,7 @@ use crate::{InBoundResponse, OrderHandle, Session, inbound};
 // reused across messages - both are cleared here / by match_order_into, so the
 // hot path does zero per-message allocation in steady state.
 pub fn read(
-    buf: Vec<u8>,
+    buf: &[u8],
     book: &mut OrderBook,
     sess: &mut Session,
     out: &mut Vec<u8>,
@@ -18,6 +18,7 @@ pub fn read(
 ) -> u64 {
     out.clear();
     let inbound = inbound::parse_enter_order(&buf[1..]).unwrap();
+    #[cfg_attr(not(feature = "metrics"), allow(unused_mut))]
     let mut eng_ns: u64 = 0;
 
     match inbound {
@@ -44,14 +45,18 @@ pub fn read(
                 s,
                 ord_type,
                 a_o.price as i64,
-                a_o.qty as u64,
-                a_o.qty as u64,
+                a_o.qty,
+                a_o.qty,
                 // now_nanos(),
             );
 
+            #[cfg(feature = "metrics")]
             let eng_t = std::time::Instant::now();
             match_order_into(book, order, CommandType::Add, ev_buf);
-            eng_ns = eng_t.elapsed().as_nanos() as u64;
+            #[cfg(feature = "metrics")]
+            {
+                eng_ns = eng_t.elapsed().as_nanos() as u64;
+            }
 
             for ev in ev_buf.drain(..) {
                 if let OrderEvent::Accepted { id, .. } = &ev {
@@ -75,8 +80,7 @@ pub fn read(
                 return eng_ns;
             };
 
-            let events =
-                matching::replace_order(book, ord_h.order_id, r_o.price as i64, r_o.qty as u64);
+            let events = matching::replace_order(book, ord_h.order_id, r_o.price as i64, r_o.qty);
 
             match events {
                 Ok(evs) => {
@@ -125,9 +129,13 @@ pub fn read(
                 return eng_ns;
             };
 
+            #[cfg(feature = "metrics")]
             let eng_t = std::time::Instant::now();
-            let events = matching::modify_order(book, ord_h.order_id, m_o.qty as u64);
-            eng_ns = eng_t.elapsed().as_nanos() as u64;
+            let events = matching::modify_order(book, ord_h.order_id, m_o.qty);
+            #[cfg(feature = "metrics")]
+            {
+                eng_ns = eng_t.elapsed().as_nanos() as u64;
+            }
 
             match events {
                 Ok(evs) => {

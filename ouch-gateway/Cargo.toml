@@ -3,6 +3,12 @@ name = "ouch-gateway"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Hot-path latency instrumentation (per-order clock reads + histograms +
+# periodic latency logging). Off by default → zero overhead in the shipped
+# binary. Enable for benchmarking: `--features metrics`.
+metrics = []
+
 [dependencies]
 chrono = "0.4.44"
 tokio = { version = "1", features = ["full"] }

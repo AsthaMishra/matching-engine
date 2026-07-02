@@ -6,30 +6,42 @@ NASDAQ **OUCH/ITCH-style protocol layer** in front of the engine: TCP sessions, 
 
 | File | Role |
 |---|---|
-| [`sessions.rs`](src/sessions.rs) | `TcpListener` + per-connection task: login (`L`), then a `select!` over inbound packets, heartbeats, and a metrics tick. |
-| [`gateway.rs`](src/gateway.rs) | `read()`: parse inbound → dispatch (Enter / Replace / Cancel / Modify) → call engine → encode response. |
+| [`io_uring_session.rs`](src/io_uring_session.rs) | **Primary datapath.** Single-threaded, run-to-completion io_uring loop (`run_uring`) with SQPOLL: one thread owns a plain `OrderBook`, read → match → write inline — no tokio, no channels, no locks. |
+| [`sessions.rs`](src/sessions.rs) | Legacy async path: per-connection tokio task, `select!` over inbound/heartbeat/metrics. Superseded by the io_uring loop. |
+| [`gateway.rs`](src/gateway.rs) | `read()`: parse inbound → dispatch (Enter / Replace / Cancel / Modify) → call engine → encode response. Shared by both paths. |
 | [`codec/inbound.rs`](src/codec/inbound.rs) | Byte-level parsing of `O/U/X/M/C/D/E/Q`. |
 | [`codec/outbound.rs`](src/codec/outbound.rs) | Fixed-size encoders for `A/U/C/D/E/B/J/P/I/T/M/R/X/G/K/Q`. |
-| [`src/bin/load_client.rs`](src/bin/load_client.rs) | Load generator: login → N lock-step `Enter`s → client-side percentiles. |
+| [`src/bin/load_client.rs`](src/bin/load_client.rs) | Lock-step load generator (blocking sockets): login → N `Enter`s → client-side RTT percentiles. |
+| [`src/bin/load_client_io_uring.rs`](src/bin/load_client_io_uring.rs) | Same lock-step RTT test, but client-side io_uring + SQPOLL (removes the client `write()` syscall). |
+| [`src/bin/load_client_pipeline.rs`](src/bin/load_client_pipeline.rs) | Throughput generator: many orders in flight (batched writes, decoupled send/recv threads) → sustained ops/sec, not RTT. |
 
-## Order-to-ack latency (the real system number)
+## Order-to-ack latency & throughput (the real system numbers)
 
-This is the figure that includes the OUCH codec + TCP - the one to judge the system by, **not** the order book's nanosecond microbenchmarks. Server software timestamps split each request into **service** (`svc`) and **socket write** (`wr`); percentiles via `hdrhistogram`, reset per interval for steady-state windows.
+The figures that include the OUCH codec + TCP — judge the system by these, **not** the order book's nanosecond microbenchmarks. Two separate axes:
 
-Single-session Enter→Accept (order rests, no cross): median **~13 µs svc** / **~33 µs client RTT**.
+| Test | Axis | Median |
+|---|---|---|
+| `load_client_io_uring` (lock-step, SQPOLL both sides) | wire-to-wire RTT | **~9.75 µs** |
+| `load_client_pipeline` (many in flight) | sustained throughput | **~1.74 M orders/sec** |
 
-`TCP_NODELAY` (kill Nagle/delayed-ACK) cut the `wr` tail from ~ms to ~130 µs and client p99 from 2.96 ms → 1.81 ms.
+RTT ≈ 1/lock-step-throughput, so the lock-step test also reads as ~94k orders/sec — that's a *latency* number, not the throughput ceiling. Both SQPOLL conversions (server + client) cut RTT from a ~38 µs blocking baseline; pipelining lifts throughput off the RTT bound (bottleneck then moves to per-order serial work, not syscalls).
 
-**How it's measured / what it isn't:** localhost **loopback**, **software** timestamps (not a NIC/switch path, not external hardware capture), single session, WSL2. A real network path adds latency - treat this as the software floor, not a production order-to-ack number. Proper external order-to-order-ack measurement is the honest next step.
+**How it's measured / what it isn't:** localhost **loopback**, **software** timestamps, single session, WSL2 (SQPOLL spins a dedicated core per side). Not a NIC/switch path or external capture — treat as the software floor. Bare-metal Linux is the honest next measurement.
 
 ```bash
-cargo run --release -p server                                    # server, 127.0.0.1:8080
-cargo run --release -p ouch-gateway --bin load_client -- 1000000 # 1M-order load test
-RUST_LOG=ouch_gateway=debug cargo run --release -p server        # verbose
+cargo run --release -p server                                              # server, 127.0.0.1:8080
+cargo run --release -p ouch-gateway --bin load_client_io_uring -- 1000000  # RTT (latency)
+cargo run --release -p ouch-gateway --bin load_client_pipeline -- 1000000  # throughput
 ```
 
-> Measured on WSL2 - VM scheduler jitter inflates the tail. Reducing the p99/p99.9 tail is the current work phase ([`PLAN.md`](../PLAN.md)).
+### `metrics` feature
+
+Hot-path instrumentation (per-order clock reads, `svc`/`wr` histograms, periodic latency logging) is gated behind the **`metrics`** cargo feature and **off by default** → zero overhead in the shipped binary. Enable it to reproduce the numbers above:
+
+```bash
+cargo run --release -p server --features ouch-gateway/metrics   # server logs latency splits
+```
 
 ## Dependencies
 
-`matching-engine` · `tokio` · `tracing` · `hdrhistogram` · `chrono`.
+`matching-engine` · `io-uring` · `tokio` · `tracing` · `hdrhistogram` · `chrono`.

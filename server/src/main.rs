@@ -1,8 +1,6 @@
-use matching_engine::{AppState, Exchange, SymbolRegistry, str_to_symbol};
-use ouch_gateway::sessions;
+use ouch_gateway::io_uring_session;
 
-#[tokio::main]
-async fn main()  -> std::io::Result<()>{
+fn main() -> std::io::Result<()> {
     // Diagnostics only — defaults to `info`, override with e.g. RUST_LOG=ouch_gateway=debug.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -33,5 +31,6 @@ async fn main()  -> std::io::Result<()>{
 
     // Both front doors, one set of books.
     // tokio::join!(rest, ouch);
-    sessions::run().await
+    // sessions::run().await
+    io_uring_session::run_uring()
 }

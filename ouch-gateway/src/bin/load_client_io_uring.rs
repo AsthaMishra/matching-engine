@@ -1,10 +1,18 @@
-// Minimal OUCH load client for wire-to-wire latency measurement.
+// io_uring variant of the OUCH load client (SQPOLL, busy-polled).
 //
-// Opens one TCP session, logs in, then sends N `Enter Order` packets and
-// times each send -> response round trip (client-side: includes network +
-// syscalls). Reports p50/p99/p99.9/max and throughput.
+// Same lock-step ping-pong as `load_client`, but the hot-path write()/read()
+// syscalls are replaced by io_uring ops driven by a kernel SQPOLL thread and a
+// busy-polled completion queue — so the client's outbound `write()` syscall
+// (~5–13µs on WSL2, the "untouchable-from-server" cost) is removed from the
+// path. Pairs with the SQPOLL server (`OUCH_URING=1`); this is lever #3 in
+// doc/progress.md ("client on io_uring too").
 //
-// Usage:  cargo run -p ouch-gateway --bin load_client [--release] -- [N]
+// NOTE: like the server, SQPOLL spins a dedicated kernel thread at ~100% CPU.
+// Running BOTH a SQPOLL server and this SQPOLL client on the same WSL2 box uses
+// two extra cores — watch for core contention if you have few cores; it can
+// mask the win. Compare against the blocking `load_client` on the same host.
+//
+// Usage:  cargo run -p ouch-gateway --release --bin load_client_io_uring -- [N]
 //   N defaults to 100_000.  Server must be running (cargo run -p server).
 //
 // Assumes a single resting limit order per send (all same-side buys at the
@@ -12,15 +20,20 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
 use hdrhistogram::Histogram;
+use io_uring::{IoUring, opcode, squeue, types::Fd};
 
 const ADDR: &str = "127.0.0.1:8080";
 const SYMBOL: &[u8; 8] = b"AAPL    "; // must match str_to_symbol("AAPL")
 const ACCEPT_LEN: usize = 64; // raw, unframed `A` Order Accepted message
 const QTY: u32 = 10;
 const PRICE: u64 = 100;
+
+const OP_WRITE: u64 = 1;
+const OP_READ: u64 = 2;
 
 fn build_login() -> Vec<u8> {
     let mut payload = [0u8; 17];
@@ -72,6 +85,27 @@ fn read_framed(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+// Push one SQE and busy-poll the CQ until its completion, returning cqe.result().
+// With SQPOLL the kernel poll thread picks the SQE off the shared ring with no
+// syscall; we only call submit() to wake it when it has parked (need_wakeup).
+fn submit_wait(ring: &mut IoUring, sqe: &squeue::Entry) -> i32 {
+    unsafe {
+        ring.submission().push(sqe).expect("sq full");
+    } // guard drops here -> tail synced, visible to the poll thread
+    if ring.submission().need_wakeup() {
+        ring.submit().expect("submit (wake poll thread)");
+    }
+    loop {
+        if let Some(cqe) = ring.completion().next() {
+            return cqe.result();
+        }
+        if ring.submission().need_wakeup() {
+            let _ = ring.submit();
+        }
+        std::hint::spin_loop();
+    }
+}
+
 fn main() {
     let n: u64 = std::env::args()
         .nth(1)
@@ -88,16 +122,25 @@ fn main() {
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
 
-    // Login handshake.
+    // Login handshake — plain blocking I/O, not timed.
     stream.write_all(&build_login()).unwrap();
     let accept = read_framed(&mut stream).expect("login response");
     assert_eq!(accept.first(), Some(&b'A'), "expected login accept 'A'");
-    println!("logged in; sending {n} orders ({warmup} warmup)…");
+
+    // Hot path runs on the raw fd via io_uring; TcpStream stays alive to own it.
+    let fd = stream.as_raw_fd();
+    let mut ring: IoUring = IoUring::builder()
+        .setup_sqpoll(2000) // kernel poll thread, park after 2000ms idle
+        // .setup_sqpoll_cpu(5) 
+        .build(256)
+        .expect("failed to init io_uring");
+
+    println!("logged in (io_uring/SQPOLL client); sending {n} orders ({warmup} warmup)…");
 
     // 1ns .. 60s range, 3 sig figs — saturating_record only clamps beyond this.
     // rtt   = total round trip (write + wait)
-    // write = client's outbound write() syscall
-    // wait  = outbound loopback + server + inbound loopback + read() syscall
+    // write = client's outbound write submit -> completion (was a syscall)
+    // wait  = outbound loopback + server + inbound loopback + read completion
     let mut rtt = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap();
     let mut write = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap();
     let mut wait = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap();
@@ -111,11 +154,42 @@ fn main() {
         user_ref += 1;
 
         let t0 = Instant::now();
-        stream.write_all(&frame).unwrap();
+
+        // WRITE: submit the full frame (loop guards against a partial write).
+        let mut off = 0;
+        while off < frame.len() {
+            let sqe = opcode::Write::new(
+                Fd(fd),
+                unsafe { frame.as_ptr().add(off) },
+                (frame.len() - off) as u32,
+            )
+            .build()
+            .user_data(OP_WRITE);
+            let w = submit_wait(&mut ring, &sqe);
+            if w <= 0 {
+                eprintln!("write failed at order {i}: rc={w}");
+                std::process::exit(1);
+            }
+            off += w as usize;
+        }
         let t1 = Instant::now();
-        if let Err(e) = stream.read_exact(&mut resp) {
-            eprintln!("read failed at order {i}: {e} (server may have rejected it)");
-            std::process::exit(1);
+
+        // READ: accumulate the fixed 64-byte accept.
+        let mut got = 0;
+        while got < ACCEPT_LEN {
+            let sqe = opcode::Read::new(
+                Fd(fd),
+                unsafe { resp.as_mut_ptr().add(got) },
+                (ACCEPT_LEN - got) as u32,
+            )
+            .build()
+            .user_data(OP_READ);
+            let r = submit_wait(&mut ring, &sqe);
+            if r <= 0 {
+                eprintln!("read failed at order {i}: rc={r} (server may have rejected it)");
+                std::process::exit(1);
+            }
+            got += r as usize;
         }
         let t2 = Instant::now();
 
@@ -136,7 +210,7 @@ fn main() {
         println!("max     {}", h.max());
     };
     dump("round-trip (total)", &rtt);
-    dump("client write() syscall", &write);
+    dump("client write (submit->complete)", &write);
     dump("wait (loopback + server + loopback + read)", &wait);
     println!("--- throughput ---");
     println!("{:.0} orders/sec ({:.2}s wall)", total as f64 / secs, secs);
