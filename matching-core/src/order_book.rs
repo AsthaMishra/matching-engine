@@ -54,6 +54,12 @@ impl OrderBook {
         }
     }
 
+    pub fn with_capacity(max_orders: usize) -> Self {
+        let mut b = Self::new();
+        b.order_index = vec![None; max_orders]; // one big alloc up front
+        b
+    }
+
     pub fn allocate_id(&mut self) -> usize {
         let id = self.next_id;
         self.next_id += 1;

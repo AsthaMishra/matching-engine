@@ -10,7 +10,7 @@ The **pure matching engine** - order book, price-time-priority matching, types. 
 | [`matching.rs`](src/matching.rs) | price-time-priority match loop, self-trade prevention |
 | [`types/`](src/types/) | `Order`, `Trade`, `Side`, `OrderEvent`, order types |
 | [`symbol_registry.rs`](src/symbol_registry.rs) | symbol name `[u8;8]` ↔ `symbol_id` |
-| `src/bin/` | ITCH 5.0 tools - `itch_reader`, `itch_replay`, `itch_replay_all` |
+| `src/bin/` | ITCH 5.0 tools - `itch_reader`, `itch_replay`, `itch_replay_all`; `synthetic_replay` (matching-path stress) |
 
 ## Design
 
@@ -49,6 +49,23 @@ Throughput: **~40M/s** warm insert · **~4.5M/s** maker+taker match.
 cargo run --release --bin itch_replay     -- <itch_file> AAPL   # single symbol
 cargo run --release --bin itch_replay_all -- <itch_file> 100    # top-N symbols
 cargo bench                                                     # Criterion suite
+```
+
+### Synthetic deep-sweep - the matching path, exercised on purpose
+
+ITCH Add messages are non-marketable (0 trades), and a single OUCH session can't cross itself (self-trade prevention keys on `trader_id`) - so neither exercises the **crossing** hot path. `synthetic_replay` does: many traders, a two-sided book kept deep, and rare-but-large marketable orders that each **sweep ~143 resting orders** (small resting qty, large aggressive qty). 1M ops, WSL2, `Instant` per op, latency split by op class:
+
+| Operation | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|
+| Passive add (rest) | < 50 ns† | 219 ns | 1.86 µs | 206 µs |
+| **Deep sweep (~143 fills)** | **2.62 µs** | 11.6 µs | 27.4 µs | 40.9 µs |
+| Cancel | 218 ns | 875 ns | 1.53 µs | 31 µs |
+| Replace | 218 ns | 984 ns | 1.64 µs | 38 µs |
+
+A sweep walks ~143 resting orders and emits ~143 execution events in ~2.6 µs → **~18 ns per order filled**. Run held 100% fill rate with the book staying deep throughout (5,112 sweeps, 731,266 executions). †Passive-add p50 sits at the `Instant` resolution floor. Pre-sizing `order_index` up front (`OrderBook::with_capacity`) removed a reallocation-and-copy stall that otherwise put the passive-add max at **~7.5 ms** (→ 206 µs, 37× lower) - the tail was allocation on book growth, not compute.
+
+```bash
+cargo run --release --bin synthetic_replay -- 1000000   # [N_OPS] [SEED], deterministic
 ```
 
 ## Correctness
