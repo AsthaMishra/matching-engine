@@ -35,16 +35,17 @@ const PRICE: u64 = 100;
 const OP_WRITE: u64 = 1;
 const OP_READ: u64 = 2;
 
-fn build_login() -> Vec<u8> {
+fn build_login(out: &mut Vec<u8>) {
     let mut payload = [0u8; 17];
     payload[0] = b'L';
     payload[1..7].copy_from_slice(b"TRADER"); // username (6)
     payload[7..17].copy_from_slice(b"PASSWORD00"); // password (10), unused by server
-    frame(&payload)
+    // let mut f = Vec::with_capacity(2 + payload.len());
+    frame(&payload, out)
 }
 
 // One sequenced Enter Order: outer 'S' + 49-byte 'O' block, length-framed.
-fn build_order(user_ref: u32) -> Vec<u8> {
+fn build_order(user_ref: u32, out: &mut Vec<u8>) {
     let mut o = [0u8; 49];
     o[0] = b'O';
     o[1..5].copy_from_slice(&user_ref.to_be_bytes());
@@ -62,18 +63,19 @@ fn build_order(user_ref: u32) -> Vec<u8> {
     o[47] = 1; // tag_value_length = 1 -> empty value slice
     o[48] = 0; // tag
 
-    let mut payload = Vec::with_capacity(50);
-    payload.push(b'S');
-    payload.extend_from_slice(&o);
-    frame(&payload)
+    let mut payload = [0u8; 50];
+    payload[0] = b'S';
+    payload[1..].copy_from_slice(&o);
+    // let mut f = Vec::with_capacity(2 + payload.len());
+    frame(&payload, out);
 }
 
 // Prefix a payload with its 2-byte big-endian length.
-fn frame(payload: &[u8]) -> Vec<u8> {
-    let mut f = Vec::with_capacity(2 + payload.len());
-    f.extend_from_slice(&(payload.len() as u16).to_be_bytes());
-    f.extend_from_slice(payload);
-    f
+fn frame(payload: &[u8], out: &mut Vec<u8>) {
+    // let mut f = Vec::with_capacity(2 + payload.len());
+    out.clear();
+    out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    out.extend_from_slice(payload);
 }
 
 // Read a length-framed packet (2-byte BE length + payload). Used for login.
@@ -122,8 +124,10 @@ fn main() {
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
 
+    let mut out: Vec<u8> = Vec::new();
     // Login handshake — plain blocking I/O, not timed.
-    stream.write_all(&build_login()).unwrap();
+    build_login(&mut out);
+    stream.write_all(&out).unwrap();
     let accept = read_framed(&mut stream).expect("login response");
     assert_eq!(accept.first(), Some(&b'A'), "expected login accept 'A'");
 
@@ -149,19 +153,21 @@ fn main() {
     let total = warmup + n;
     let wall = Instant::now();
 
-    for i in 0..total {
-        let t0 = Instant::now();
+    build_order(user_ref, &mut out);
 
-        let frame = build_order(user_ref);
+    for i in 0..total {
+        out[4..8].copy_from_slice(&user_ref.to_be_bytes());
         user_ref += 1;
+
+        let t0 = Instant::now();
 
         // WRITE: submit the full frame (loop guards against a partial write).
         let mut off = 0;
-        while off < frame.len() {
+        while off < out.len() {
             let sqe = opcode::Write::new(
                 Fd(fd),
-                unsafe { frame.as_ptr().add(off) },
-                (frame.len() - off) as u32,
+                unsafe { out.as_ptr().add(off) },
+                (out.len() - off) as u32,
             )
             .build()
             .user_data(OP_WRITE);

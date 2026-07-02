@@ -121,7 +121,7 @@ pub fn run_uring() -> std::io::Result<()> {
             ring.submit()?; // only syscall when poll thread parked
         }
 
-        let (_submitter, mut sq, mut cq) = ring.split();
+        let (_submitter, mut sq, cq) = ring.split();
 
         for cqe in cq {
             let ud = cqe.user_data();

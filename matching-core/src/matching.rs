@@ -1,6 +1,5 @@
 use crate::price_to_idx;
 use crate::types::{CancelRejectReason, CommandType, OrderEvent, OrderType};
-use crate::utils::now_nanos;
 use crate::{
     order_book::OrderBook,
     types::{Order, Side, Trade},

@@ -6,7 +6,6 @@ use tokio::sync::mpsc::Sender;
 use crate::{
     BookResponse, match_order,
     matching::replace_order,
-    now_nanos,
     order_book::OrderBook,
     types::{CommandType, Order, OrderType, Side},
 };
