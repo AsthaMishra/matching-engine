@@ -10,7 +10,7 @@ pub fn now_nanos() -> u64 {
 pub const TICK_SIZE: i64 = 1; // minimum price increment in cents ($0.01)
 pub const MAX_PRICE: i64 = 100_000; // $1,000 in cents - array has MAX_PRICE / TICK_SIZE slots
 pub const ORDER_CAPACITY: usize = 16; // pre-allocated orders per price level
-pub const INDEX_CAPACITY: usize = 1024; // pre-allocated slots in order_index
+pub const INDEX_CAPACITY: usize = 4096; // pre-allocated slots in order_index
 
 pub fn price_to_idx(price: i64) -> Result<usize, Box<dyn std::error::Error>> {
     if price <= 0 {

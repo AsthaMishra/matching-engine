@@ -143,7 +143,8 @@ fn main() {
     let seed: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(42);
 
     let mut rng = Rng(seed | 1);
-    let mut book = OrderBook::with_capacity(SEED_ORDERS + n_ops + 16);
+    // let mut book = OrderBook::with_capacity(SEED_ORDERS + n_ops + 16);
+    let mut book = OrderBook::new();
     let mut ev = Vec::with_capacity(256);
     let mut live = LiveSet::new(SEED_ORDERS + n_ops);
 
@@ -251,7 +252,7 @@ fn main() {
     );
     println!("\n  latency per op (ns), by class:");
     add_p.report("add-passive");
-    add_x.report("add-cross");
+    add_x.report("match-order");
     cancel.report("cancel");
     replace.report("replace");
     println!(

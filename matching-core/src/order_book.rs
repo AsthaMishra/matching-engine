@@ -37,6 +37,7 @@ pub struct OrderBook {
     pub best_bid_idx: Option<usize>,
     pub best_ask_idx: Option<usize>,
     next_id: usize,
+    free_ids: Vec<usize>,
 }
 
 impl OrderBook {
@@ -51,6 +52,7 @@ impl OrderBook {
             best_ask_idx: None,
             best_bid_idx: None,
             next_id: 0,
+            free_ids: Vec::with_capacity(INDEX_CAPACITY),
         }
     }
 
@@ -61,9 +63,11 @@ impl OrderBook {
     }
 
     pub fn allocate_id(&mut self) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+        self.free_ids.pop().unwrap_or_else(|| {
+            let id = self.next_id;
+            self.next_id += 1;
+            id
+        })
     }
 
     // new order , does not exisst yet
@@ -241,6 +245,7 @@ impl OrderBook {
             price_level.total_qty -= order.remaining_qty as u64;
             order.active = false;
             price_level.active_count -= 1;
+            self.free_ids.push(order_id);
 
             //check if removed order was only entry
             if price_level.active_count == 0 {
