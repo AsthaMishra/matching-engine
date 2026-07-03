@@ -59,7 +59,8 @@ impl Conn {
 }
 
 pub fn run_uring() -> std::io::Result<()> {
-    let mut book = OrderBook::new();
+    // 1,048,576  for 1 million order with capacity
+    let mut book = OrderBook::with_capacity(1_048_576);
     let mut ring: IoUring = IoUring::builder()
         .setup_sqpoll(2000) // kernel poll thread, park after 2000ms idle
         // .setup_sqpoll_cpu(3) // optional: pin the poll thread to a core
