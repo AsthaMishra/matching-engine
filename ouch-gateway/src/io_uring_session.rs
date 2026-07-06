@@ -294,6 +294,11 @@ pub fn run_uring() -> std::io::Result<()> {
     }
 }
 
+async fn send_heartbeat() {
+    let buf = [0u8, 1, b'H'];
+    // let _ = writer.write_all(&buf).await;
+}
+
 fn push_login_accept(resp: &mut Vec<u8>, session_id: u64) {
     let mut buf = [b' '; 33];
     let len = (buf.len() - 2) as u16; // 31

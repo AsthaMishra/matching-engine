@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use ouch_gateway::io_uring_session;
 
 fn main() -> std::io::Result<()> {
