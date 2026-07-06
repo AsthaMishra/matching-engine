@@ -110,10 +110,100 @@ impl Journal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    pub fn round_trip() {
-        let j = Journal::open(Path::new("docs/text1.md"));
+    use super::Journal;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // A unique temp path per call, so tests (which run in parallel) never share a
+    // file. We clean it up at the end of each test.
+    fn tmp_path() -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "journal-test-{}-{}-{}.log",
+            std::process::id(),
+            nanos,
+            id
+        ))
     }
-    pub fn append() {}
-    pub fn commit() {}
+
+    // A brand-new (empty) journal hands out seq 1 first, and nothing is durable.
+    #[test]
+    fn empty_file_starts_fresh() {
+        let p = tmp_path();
+        let j = Journal::open(&p).unwrap();
+        assert_eq!(j.next_seq, 1);
+        assert_eq!(j.durable_seq, 0);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // Proves the encode→disk→decode path is byte-correct: after writing 3 records
+    // and reopening, recovery scans the file and continues from seq 4. If any field
+    // offset, endianness, or the crc were wrong, recovery would reject the records
+    // and this would come back as next_seq == 1.
+    #[test]
+    fn round_trip_recovers_sequence() {
+        let p = tmp_path();
+        {
+            let mut j = Journal::open(&p).unwrap();
+            assert_eq!(j.append(b'S', b"order-1"), 1);
+            assert_eq!(j.append(b'S', b"order-2"), 2);
+            assert_eq!(j.append(b'E', b"fill-3"), 3);
+            assert_eq!(j.commit().unwrap(), 3);
+        }
+        let j2 = Journal::open(&p).unwrap();
+        assert_eq!(j2.next_seq, 4);
+        assert_eq!(j2.durable_seq, 3);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // The durability barrier: appended-but-not-committed records live only in the
+    // in-memory `pending` buffer, never hit disk, and so are gone after a restart.
+    #[test]
+    fn uncommitted_appends_are_lost() {
+        let p = tmp_path();
+        {
+            let mut j = Journal::open(&p).unwrap();
+            j.append(b'S', b"a");
+            j.append(b'S', b"b");
+            j.commit().unwrap(); // seq 1,2 durable
+            j.append(b'S', b"c"); // seq 3 buffered only - never committed
+        }
+        let j2 = Journal::open(&p).unwrap();
+        assert_eq!(j2.next_seq, 3); // only the 2 committed records survived
+        assert_eq!(j2.durable_seq, 2);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // The crash case: simulate a process killed mid-write by appending a length
+    // header that promises more bytes than actually follow. Recovery must stop at
+    // the last complete record and ignore the torn tail - this is what the EOF
+    // handling (and, for corruption, the crc) buys you.
+    #[test]
+    fn torn_tail_is_ignored() {
+        let p = tmp_path();
+        {
+            let mut j = Journal::open(&p).unwrap();
+            j.append(b'S', b"good-1");
+            j.append(b'S', b"good-2");
+            j.commit().unwrap();
+        }
+        {
+            let mut f = OpenOptions::new().append(true).open(&p).unwrap();
+            f.write_all(&100u32.to_be_bytes()).unwrap(); // claims 100 more bytes…
+            f.write_all(b"xyz").unwrap(); // …but only 3 follow, then EOF
+            f.sync_data().unwrap();
+        }
+        let j2 = Journal::open(&p).unwrap();
+        assert_eq!(j2.next_seq, 3); // stopped cleanly at the last good record
+        assert_eq!(j2.durable_seq, 2);
+        let _ = std::fs::remove_file(&p);
+    }
 }
