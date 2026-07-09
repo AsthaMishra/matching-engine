@@ -21,6 +21,14 @@ pub struct Journal {
 }
 
 impl Journal {
+    pub fn next_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    pub fn durable_seq(&self) -> u64 {
+        self.durable_seq
+    }
+
     pub fn append(&mut self, ty: u8, payload: &[u8]) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;

@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     net::TcpListener,
     os::fd::AsRawFd,
+    path::{Path, PathBuf},
     ptr,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -17,7 +18,7 @@ use io_uring::{
 };
 use matching_engine::order_book::OrderBook;
 
-use crate::{Session, gateway};
+use crate::{Journal, Session, gateway, journal};
 
 const OP_READ: u64 = 0;
 const OP_WRITE: u64 = 1;
@@ -27,6 +28,11 @@ const METRICS: u64 = u64::MAX - 1;
 const HEARTBEAT_T_OUT: u64 = u64::MAX - 2;
 const OP_ACCEPT: u64 = u64::MAX - 3; // listener accept completion
 const OP_CLOSE: u64 = u64::MAX - 4; // fire-and-forget close completion
+
+const REC_ENTER_ORDER: u8 = b'S'; // an inbound sequenced order
+const REC_EXEC: u8 = b'E'; // an execution / fill
+const REC_CANCEL: u8 = b'C'; // a cancel
+const REC_SNAPSHOT: u8 = b'K'; // a book checkpoint marker
 
 //sqe - submission queue
 //cqe - completion queue
@@ -38,6 +44,9 @@ struct Conn {
     resp: Vec<u8>,
     sess: Session,
     logged_in: bool,
+    close_after_flush: bool,
+
+    out_journal: Option<Journal>,
     // set when a write is submitted, consumed on its completion → write latency
     #[cfg(feature = "metrics")]
     write_t0: Option<Instant>,
@@ -52,11 +61,14 @@ impl Conn {
             resp: Vec::with_capacity(4096),
             sess,
             logged_in: false,
+            close_after_flush: false,
             #[cfg(feature = "metrics")]
             write_t0: None,
+            out_journal: None,
         }
     }
 }
+const JOURNAL_DIR: &str = "journals/outbound";
 
 pub fn run_uring() -> std::io::Result<()> {
     // 1,048,576  for 1 million order with capacity
@@ -105,7 +117,19 @@ pub fn run_uring() -> std::io::Result<()> {
     let mut conns: Vec<Option<Conn>> = Vec::default();
     let mut out: Vec<u8> = Vec::new();
     let mut ev_buf = Vec::new();
+    // scratch buffer for building inbound journal records (session_id + frame),
+    // reused across orders so the hot path stays allocation-free.
+    let mut rec_buf: Vec<u8> = Vec::new();
+    // conns whose response is produced but not yet sent: held until the inbound
+    // journal is committed this iteration, so we never send before it's durable.
+    let mut pending_writes: Vec<u32> = Vec::new();
     static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+    let dir = PathBuf::from("data");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(JOURNAL_DIR)?; // per-session outbound journals live here
+    let jour_path = dir.join("gateway.journal");
+    let mut inbound = Journal::open(&jour_path)?;
 
     // Engine latency (parse + match + encode), recorded per order from the
     // `eng_ns` that gateway::read already measures — no extra clock read here.
@@ -174,6 +198,7 @@ pub fn run_uring() -> std::io::Result<()> {
                     }
                 }
                 OP_CLOSE => {}
+
                 _ => {
                     let (op, conn_id) = untag(ud);
 
@@ -208,11 +233,45 @@ pub fn run_uring() -> std::io::Result<()> {
                                 let payload = &conn.in_buff[consumed + 2..consumed + 2 + len];
                                 match payload[0] {
                                     b'L' => {
-                                        conn.sess.username = payload[1..7].try_into().unwrap();
-                                        push_login_accept(&mut conn.resp, conn.sess.session_id);
+                                        let username: [u8; 6] = payload[1..7].try_into().unwrap();
+                                        let Some(session_id) = parse_username(&username) else {
+                                            push_login_reject(&mut conn.resp, b'A'); // Not Authorized
+                                            conn.close_after_flush = true;
+                                            break; // stop parsing further frames from this buffer
+                                        };
+
+                                        let journal = match Journal::open(&path_for(session_id)) {
+                                            Ok(j) => j,
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    session_id,
+                                                    ?e,
+                                                    "failed to open session journal"
+                                                );
+                                                push_login_reject(&mut conn.resp, b'S'); // Session not available
+                                                conn.close_after_flush = true;
+                                                break;
+                                            }
+                                        };
+
+                                        conn.sess.username = username;
+                                        conn.sess.session_id = session_id;
+                                        conn.sess.next_seq = journal.next_seq(); // ← recovered seq, read from the journal
+                                        conn.out_journal = Some(journal); // ← keep it open for appends
                                         conn.logged_in = true;
+
+                                        push_login_accept(&mut conn.resp, session_id);
                                     }
                                     b'S' if conn.logged_in => {
+                                        // Journal the command BEFORE matching. The raw client
+                                        // frame lacks the server-assigned session_id, so prepend
+                                        // it, replay needs it to rebuild each order's owner.
+                                        rec_buf.clear();
+                                        rec_buf
+                                            .extend_from_slice(&conn.sess.session_id.to_be_bytes());
+                                        rec_buf.extend_from_slice(payload);
+                                        inbound.append(REC_ENTER_ORDER, &rec_buf);
+
                                         // gateway::read clears `out`, so copy it out before the next frame overwrites it
                                         #[cfg(feature = "metrics")]
                                         let eng_ns = gateway::read(
@@ -248,11 +307,16 @@ pub fn run_uring() -> std::io::Result<()> {
                             }
 
                             if conn.resp.is_empty() {
-                                // fully sent → now safe to read the next request
-                                arm_read(&mut sq, conn, conn_id);
+                                if conn.close_after_flush {
+                                    close_conn(&mut conns, &mut sq, conn_id); // reject sent, now drop the socket
+                                } else {
+                                    arm_read(&mut sq, conn, conn_id);
+                                }
                             } else {
-                                // partial write → send the remainder before reading again
-                                arm_write(&mut sq, conn, conn_id);
+                                // Hold the response: it's flushed after the inbound
+                                // journal is committed at the end of this iteration
+                                // (journal-then-send durability barrier).
+                                pending_writes.push(conn_id);
                             }
                         }
                         OP_WRITE => {
@@ -278,7 +342,11 @@ pub fn run_uring() -> std::io::Result<()> {
 
                             if conn.resp.is_empty() {
                                 // fully sent → now safe to read the next request
-                                arm_read(&mut sq, conn, conn_id);
+                                if conn.close_after_flush {
+                                    close_conn(&mut conns, &mut sq, conn_id); // reject sent, now drop the socket
+                                } else {
+                                    arm_read(&mut sq, conn, conn_id);
+                                }
                             } else {
                                 // partial write → send the remainder before reading again
                                 arm_write(&mut sq, conn, conn_id);
@@ -290,8 +358,41 @@ pub fn run_uring() -> std::io::Result<()> {
             }
         }
 
+        // Group commit: one fsync covers every order journaled this iteration.
+        // Blocking here is acceptable — batching amortizes it across the whole
+        // batch; the io_uring async-fsync optimization comes later.
+        inbound.commit()?;
+
+        // Every journaled command is now durable → flush the held responses.
+        for conn_id in pending_writes.drain(..) {
+            if let Some(Some(conn)) = conns.get_mut(conn_id as usize) {
+                arm_write(&mut sq, conn, conn_id);
+            }
+        }
+
         sq.sync();
     }
+}
+
+fn path_for(session_id: u64) -> PathBuf {
+    Path::new(JOURNAL_DIR).join(format!("{session_id}.log"))
+}
+
+fn parse_username(username: &[u8; 6]) -> Option<u64> {
+    let s = std::str::from_utf8(username).ok()?; // numeric ASCII is valid UTF-8
+    let s = s.trim_matches(|c| c == ' ' || c == '\0'); // strip field padding
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None; // non-numeric → not a valid id
+    }
+    s.parse::<u64>().ok()
+}
+
+fn push_login_reject(resp: &mut Vec<u8>, reason: u8) {
+    let mut buf = [0u8; 4];
+    buf[0..2].copy_from_slice(&2u16.to_be_bytes()); // payload length = 2
+    buf[2] = b'J';
+    buf[3] = reason;
+    resp.extend_from_slice(&buf);
 }
 
 async fn send_heartbeat() {
