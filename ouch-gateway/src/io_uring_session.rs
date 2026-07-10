@@ -132,26 +132,8 @@ pub fn run_uring() -> std::io::Result<()> {
     let mut inbound = Journal::open(&jour_path)?;
 
     // Crash recovery: rebuild the book from the journal before accepting any
-    // connections. Each REC_ENTER_ORDER record is `session_id (8B) + raw frame`;
-    // we replay it through the same `gateway::read` path used live, so ids
-    // (from the deterministic `allocate_id`) come out identical. The throwaway
-    // session only carries the owning session_id and its `map` and the response
-    // bytes are discarded here (per-session state is restored later, at login).
-    {
-        let mut replay_sess = Session {
-            username: [0u8; 6],
-            session_id: 0,
-            next_seq: 1,
-            map: HashMap::new(),
-        };
-        inbound.replay(|ty, payload| {
-            if ty == REC_ENTER_ORDER {
-                replay_sess.session_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
-                let frame = &payload[8..];
-                let _ = gateway::read(frame, &mut book, &mut replay_sess, &mut out, &mut ev_buf);
-            }
-        })?;
-    }
+    // connections.
+    recover_book(&mut inbound, &mut book)?;
 
     // Engine latency (parse + match + encode), recorded per order from the
     // `eng_ns` that gateway::read already measures — no extra clock read here.
@@ -396,6 +378,26 @@ pub fn run_uring() -> std::io::Result<()> {
     }
 }
 
+// Rebuild `book` from the inbound journa
+fn recover_book(inbound: &mut Journal, book: &mut OrderBook) -> std::io::Result<()> {
+    let mut replay_sess = Session {
+        username: [0u8; 6],
+        session_id: 0,
+        next_seq: 1,
+        map: HashMap::new(),
+    };
+    let mut out: Vec<u8> = Vec::new();
+    let mut ev_buf = Vec::new();
+    inbound.replay(|ty, payload| {
+        if ty == REC_ENTER_ORDER {
+            replay_sess.session_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
+            let frame = &payload[8..];
+            let _ = gateway::read(frame, book, &mut replay_sess, &mut out, &mut ev_buf);
+        }
+    })?;
+    Ok(())
+}
+
 fn path_for(session_id: u64) -> PathBuf {
     Path::new(JOURNAL_DIR).join(format!("{session_id}.log"))
 }
@@ -506,4 +508,119 @@ fn report_latency(svc: &Histogram<u64>, wr: &Histogram<u64>) {
         wr_max = wr.max(),
         "latency split (ns): eng=parse+match+encode, wr=write submit→complete"
     );
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::{REC_ENTER_ORDER, recover_book};
+    use crate::Journal;
+    use matching_engine::{order_book::OrderBook, types::Side};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp_path() -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "recover-test-{}-{}-{}.journal",
+            std::process::id(),
+            nanos,
+            id
+        ))
+    }
+
+    // One sequenced Enter Order as the gateway sees it on the wire (unframed):
+    // outer 'S' byte + the 49-byte 'O' block. Mirrors the load client's builder.
+    fn make_order_payload(user_ref: u32, side: u8, qty: u32, price: u64) -> Vec<u8> {
+        let mut o = [0u8; 49];
+        o[0] = b'O';
+        o[1..5].copy_from_slice(&user_ref.to_be_bytes());
+        o[5] = side;
+        o[6..10].copy_from_slice(&qty.to_be_bytes());
+        o[10..18].copy_from_slice(b"TESTSYM0"); // symbol (8)
+        o[18..26].copy_from_slice(&price.to_be_bytes());
+        o[26] = b'0'; // time_in_force: Day -> Limit
+        o[27] = b'Y'; // display
+        o[28] = b'P'; // capacity
+        o[29] = b'N'; // inter-market sweep eligibility
+        o[30] = b'N'; // cross_type
+        o[31..45].copy_from_slice(b"ORDER000000001"); // ci_ord_id (14)
+        o[45..47].copy_from_slice(&1u16.to_be_bytes()); // appendage_length
+        o[47] = 1; // tag_value_length = 1 -> empty value slice
+        o[48] = 0; // tag
+
+        let mut payload = Vec::with_capacity(50);
+        payload.push(b'S');
+        payload.extend_from_slice(&o);
+        payload
+    }
+
+    // Append one journal record exactly as the live path does: session_id + frame.
+    fn journal_order(j: &mut Journal, session_id: u64, payload: &[u8]) {
+        let mut rec = session_id.to_be_bytes().to_vec();
+        rec.extend_from_slice(payload);
+        j.append(REC_ENTER_ORDER, &rec);
+    }
+
+    // End-to-end recovery: journal a few resting orders, commit (durable), then
+    // reopen from scratch and rebuild the book. Proves append -> commit -> reopen
+    // -> replay -> gateway::read faithfully reconstructs side/price/qty.
+    #[test]
+    fn recovery_rebuilds_resting_book() {
+        let p = tmp_path();
+        let session_id = 4242u64;
+        let (price, qty) = (10_000u64, 50u32);
+        {
+            let mut j = Journal::open(&p).unwrap();
+            for user_ref in 1..=3u32 {
+                journal_order(&mut j, session_id, &make_order_payload(user_ref, b'B', qty, price));
+            }
+            j.commit().unwrap();
+        } // drop = simulate a crash after commit
+
+        let mut j2 = Journal::open(&p).unwrap();
+        let mut book = OrderBook::with_capacity(1024);
+        recover_book(&mut j2, &mut book).unwrap();
+
+        // Three resting buys at `price` came back with full quantity.
+        assert_eq!(book.best_bid(), Some(price as i64));
+        assert_eq!(
+            book.volume_at_price(Side::Buy, price as i64),
+            Some(3 * qty as u64)
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // The durability barrier, end to end: an order appended but never committed
+    // is lost on "crash", so recovery must not resurrect it.
+    #[test]
+    fn recovery_ignores_uncommitted_order() {
+        let p = tmp_path();
+        let session_id = 7u64;
+        let (price, qty) = (10_000u64, 50u32);
+        {
+            let mut j = Journal::open(&p).unwrap();
+            journal_order(&mut j, session_id, &make_order_payload(1, b'B', qty, price));
+            journal_order(&mut j, session_id, &make_order_payload(2, b'B', qty, price));
+            j.commit().unwrap(); // 2 orders durable
+            // 3rd order appended but NOT committed -> only in memory, lost on crash
+            journal_order(&mut j, session_id, &make_order_payload(3, b'B', qty, price));
+        }
+
+        let mut j2 = Journal::open(&p).unwrap();
+        let mut book = OrderBook::with_capacity(1024);
+        recover_book(&mut j2, &mut book).unwrap();
+
+        // Only the 2 committed orders survived.
+        assert_eq!(
+            book.volume_at_price(Side::Buy, price as i64),
+            Some(2 * qty as u64)
+        );
+        let _ = std::fs::remove_file(&p);
+    }
 }
