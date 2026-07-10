@@ -131,6 +131,28 @@ pub fn run_uring() -> std::io::Result<()> {
     let jour_path = dir.join("gateway.journal");
     let mut inbound = Journal::open(&jour_path)?;
 
+    // Crash recovery: rebuild the book from the journal before accepting any
+    // connections. Each REC_ENTER_ORDER record is `session_id (8B) + raw frame`;
+    // we replay it through the same `gateway::read` path used live, so ids
+    // (from the deterministic `allocate_id`) come out identical. The throwaway
+    // session only carries the owning session_id and its `map` and the response
+    // bytes are discarded here (per-session state is restored later, at login).
+    {
+        let mut replay_sess = Session {
+            username: [0u8; 6],
+            session_id: 0,
+            next_seq: 1,
+            map: HashMap::new(),
+        };
+        inbound.replay(|ty, payload| {
+            if ty == REC_ENTER_ORDER {
+                replay_sess.session_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
+                let frame = &payload[8..];
+                let _ = gateway::read(frame, &mut book, &mut replay_sess, &mut out, &mut ev_buf);
+            }
+        })?;
+    }
+
     // Engine latency (parse + match + encode), recorded per order from the
     // `eng_ns` that gateway::read already measures — no extra clock read here.
     #[cfg(feature = "metrics")]
