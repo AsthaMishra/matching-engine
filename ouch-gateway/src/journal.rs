@@ -70,7 +70,7 @@ impl Journal {
 
         // Scan the existing file to recover the last durable sequence number.
         // We don't need the record contents here, so the callback is a no-op.
-        let rec_req = Self::scan(&mut file, |_ty, _payload| {})?;
+        let rec_req = Self::scan(&mut file, |_seq, _ty, _payload| {})?;
 
         Ok(Self {
             file,
@@ -80,13 +80,21 @@ impl Journal {
         })
     }
 
-    /// Replay every committed record from the start of the file, invoking
-    /// `on_record(ty, payload)` for each. Used at startup to rebuild in-memory
-    /// state (e.g. the order book) from the journal. Stops cleanly at EOF or the
-    /// first torn/corrupt record -> identical semantics to recovery in `open`.
-    pub fn replay(&mut self, on_record: impl FnMut(u8, &[u8])) -> Result<()> {
+    /// Replay committed records with `seq > after_seq`, invoking
+    /// `on_record(ty, payload)` for each. `after_seq = 0` replays everything
+    /// (all seqs are >= 1). Used at startup to apply only the journal tail a
+    /// snapshot doesn't already cover. Stops cleanly at EOF or a torn record.
+    pub fn replay_from(
+        &mut self,
+        after_seq: u64,
+        mut on_record: impl FnMut(u8, &[u8]),
+    ) -> Result<()> {
         self.file.seek(SeekFrom::Start(0))?;
-        Self::scan(&mut self.file, on_record)?;
+        Self::scan(&mut self.file, |seq, ty, payload| {
+            if seq > after_seq {
+                on_record(ty, payload);
+            }
+        })?;
         Ok(())
     }
 
@@ -95,7 +103,7 @@ impl Journal {
     /// number seen (0 if none). Stops at EOF, an impossibly short record, or the
     /// first record whose crc fails -> that's the crash point; everything after
     /// it is discarded.
-    fn scan(file: &mut File, mut on_record: impl FnMut(u8, &[u8])) -> Result<u64> {
+    fn scan(file: &mut File, mut on_record: impl FnMut(u64, u8, &[u8])) -> Result<u64> {
         let mut last_seq = 0u64;
 
         loop {
@@ -135,7 +143,7 @@ impl Journal {
                 break; // corruption: stop at the crash point
             }
 
-            on_record(ty, payload);
+            on_record(seq, ty, payload);
             last_seq = seq;
         }
 

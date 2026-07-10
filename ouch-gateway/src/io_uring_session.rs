@@ -435,16 +435,25 @@ fn load_snapshot(book: &mut OrderBook) -> std::io::Result<u64> {
     let path = PathBuf::from("data").join("book.snapshot");
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0), // no snapshot yet
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0), // no snapshot yet
         Err(e) => return Err(e),
     };
+    if bytes.len() < 8 {
+        return Ok(0); // truncated/empty snapshot → ignore, replay from the start
+    }
     let at_seq = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
     *book = OrderBook::deserialize(&bytes[8..]);
     Ok(at_seq)
 }
 
-// Rebuild `book` from the inbound journa
+// Rebuild `book` on startup: seed from the newest snapshot, then replay the
+// journal records that came after it.
 fn recover_book(inbound: &mut Journal, book: &mut OrderBook) -> std::io::Result<()> {
+    // 1. Seed from the snapshot (if any). at_seq = the seq it was taken at.
+    let at_seq = load_snapshot(book)?;
+
+    // 2. Replay only records after the snapshot, through the same gateway::read
+    //    path used live, so ids from the deterministic allocate_id match.
     let mut replay_sess = Session {
         username: [0u8; 6],
         session_id: 0,
@@ -453,7 +462,7 @@ fn recover_book(inbound: &mut Journal, book: &mut OrderBook) -> std::io::Result<
     };
     let mut out: Vec<u8> = Vec::new();
     let mut ev_buf = Vec::new();
-    inbound.replay(|ty, payload| {
+    inbound.replay_from(at_seq, |ty, payload| {
         if ty == REC_ENTER_ORDER {
             replay_sess.session_id = u64::from_be_bytes(payload[0..8].try_into().unwrap());
             let frame = &payload[8..];
