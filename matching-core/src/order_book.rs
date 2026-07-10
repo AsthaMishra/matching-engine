@@ -24,6 +24,18 @@ impl PriceLevel {
             head_idx: 0,
         }
     }
+
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&(self.price).to_be_bytes());
+        out.extend_from_slice(&(self.total_qty).to_be_bytes());
+        out.extend_from_slice(&(self.orders.len() as u64).to_be_bytes());
+
+        for o in &self.orders {
+            o.serialize(out);
+        }
+        out.extend_from_slice(&(self.active_count as u64).to_be_bytes());
+        out.extend_from_slice(&(self.head_idx as u64).to_be_bytes());
+    }
 }
 
 pub struct OrderBook {
@@ -53,6 +65,58 @@ impl OrderBook {
             best_bid_idx: None,
             next_id: 0,
             free_ids: Vec::with_capacity(INDEX_CAPACITY),
+        }
+    }
+
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&(self.next_id as u64).to_be_bytes());
+
+        out.extend_from_slice(&(self.free_ids.len() as u64).to_be_bytes());
+        for id in &self.free_ids {
+            out.extend_from_slice(&(*id as u64).to_be_bytes());
+        }
+
+        let bid_levels: u64 = self.bid_bitmap.iter().map(|w| w.count_ones() as u64).sum();
+
+        out.extend_from_slice(&(bid_levels as u64).to_be_bytes());
+        for (word_idx, &word) in self.bid_bitmap.iter().enumerate() {
+            if word == 0 {
+                continue;
+            }
+            let mut w = word;
+            while w != 0 {
+                let bit = 63 - w.leading_zeros() as usize;
+                let slot = word_idx * 64 + bit;
+                if let Some(pl) = &self.bid[slot] {
+                    // result.push((pl.price, pl.total_qty));
+                    // if result.len() == n {
+                    //     break 'outer;
+                    // }
+                    pl.serialize(out);
+                }
+                w &= !(1u64 << bit);
+            }
+        }
+
+        let ask_levels: u64 = self.ask_bitmap.iter().map(|w| w.count_ones() as u64).sum();
+        out.extend_from_slice(&(ask_levels as u64).to_be_bytes());
+        for (word_idx, &word) in self.ask_bitmap.iter().enumerate() {
+            if word == 0 {
+                continue;
+            }
+            let mut w = word;
+            while w != 0 {
+                let bit = w.trailing_zeros() as usize;
+                let slot = word_idx * 64 + bit;
+                if let Some(pl) = &self.ask[slot] {
+                    // result.push((pl.price, pl.total_qty));
+                    // if result.len() == n {
+                    //     break 'outer;
+                    // }
+                    pl.serialize(out);
+                }
+                w &= w - 1;
+            }
         }
     }
 

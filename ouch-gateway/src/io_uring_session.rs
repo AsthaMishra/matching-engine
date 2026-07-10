@@ -28,10 +28,10 @@ const METRICS: u64 = u64::MAX - 1;
 const HEARTBEAT_T_OUT: u64 = u64::MAX - 2;
 const OP_ACCEPT: u64 = u64::MAX - 3; // listener accept completion
 const OP_CLOSE: u64 = u64::MAX - 4; // fire-and-forget close completion
+const SNAP: u64 = u64::MAX - 5; // fire-and-forget close completion
 
 const REC_ENTER_ORDER: u8 = b'S'; // an inbound sequenced order
 const REC_EXEC: u8 = b'E'; // an execution / fill
-const REC_CANCEL: u8 = b'C'; // a cancel
 const REC_SNAPSHOT: u8 = b'K'; // a book checkpoint marker
 
 //sqe - submission queue
@@ -112,6 +112,13 @@ pub fn run_uring() -> std::io::Result<()> {
 
     (unsafe {
         let _ = ring.submission().push(&sqe_hb_ts);
+    });
+
+    let snap = Timespec::new().sec(10800); // every three hour
+    let snap_ts = opcode::Timeout::new(&snap).build().user_data(SNAP);
+
+    (unsafe {
+        let _ = ring.submission().push(&snap_ts);
     });
 
     let mut conns: Vec<Option<Conn>> = Vec::default();
@@ -204,6 +211,20 @@ pub fn run_uring() -> std::io::Result<()> {
                     }
                 }
                 OP_CLOSE => {}
+                SNAP => {
+                    // Make the book and journal agree before snapshotting: flush
+                    // pending so every order already applied to `book` is durable,
+                    // then record the snapshot at that exact seq.
+                    inbound.commit()?;
+                    let at_seq = inbound.durable_seq();
+                    if let Err(e) = snap_shot_book(&book, at_seq) {
+                        tracing::warn!(?e, "snapshot failed"); // don't kill the server
+                    }
+                    // re-arm the periodic snapshot timer (one-shot Timeout)
+                    unsafe {
+                        let _ = sq.push(&snap_ts);
+                    }
+                }
 
                 _ => {
                     let (op, conn_id) = untag(ud);
@@ -378,6 +399,33 @@ pub fn run_uring() -> std::io::Result<()> {
 
         sq.sync();
     }
+}
+
+// Write a single, latest-wins book snapshot. A snapshot *replaces* the previous
+// one (it is not appended), so recovery only ever loads one book dump. Crash
+// safety comes from write-temp → fsync → atomic rename: a crash leaves either the
+// old complete snapshot or the new one, never a half-written mix.
+fn snap_shot_book(book: &OrderBook, at_seq: u64) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let dir = PathBuf::from("data");
+    std::fs::create_dir_all(&dir)?;
+
+    // at_seq header (where to resume the journal) + full book dump.
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&at_seq.to_be_bytes());
+    book.serialize(&mut payload);
+
+    let final_path = dir.join("book.snapshot");
+    let tmp_path = dir.join("book.snapshot.tmp");
+    {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(&payload)?;
+        f.sync_all()?; // durable on disk before we swap it in
+    }
+    std::fs::rename(&tmp_path, &final_path)?; // atomic on the same filesystem
+
+    Ok(())
 }
 
 // Rebuild `book` from the inbound journa

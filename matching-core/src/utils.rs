@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::types::{OrderType, Side};
+
 pub fn now_nanos() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -36,4 +38,23 @@ pub fn str_to_symbol(s: &str) -> [u8; 8] {
     let len = b.len().min(8);
     buf[..len].copy_from_slice(&b[..len]);
     buf
+}
+
+
+pub fn side_to_u8(s: Side) -> u8 {
+    match s {
+        Side::Buy => 0,
+        Side::Sell => 1,
+        Side::SellShort => 2,
+        Side::SellShortExempt => 3,
+    }
+}
+
+pub fn ordertype_to_u8(t: OrderType) -> u8 {
+    match t {
+        OrderType::Limit => 0,
+        OrderType::Market => 1,
+        OrderType::IOC => 2,
+        OrderType::FOK => 3,
+    }
 }

@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::{ordertype_to_u8, side_to_u8};
+
 #[derive(Clone)]
 pub struct Order {
     pub id: usize,
@@ -48,6 +50,17 @@ impl Order {
             remaining_qty,
             active: true,
         }
+    }
+
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&(self.id as u64).to_be_bytes());
+        out.extend_from_slice(&self.trader_id.to_be_bytes());
+        out.push(side_to_u8(self.side));
+        out.push(ordertype_to_u8(self.order_type));
+        out.extend_from_slice(&(self.price).to_be_bytes());
+        out.extend_from_slice(&(self.qty).to_be_bytes());
+        out.extend_from_slice(&(self.remaining_qty).to_be_bytes());
+        out.push(self.active as u8);
     }
 }
 //B= BUY
