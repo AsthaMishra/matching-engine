@@ -123,7 +123,6 @@ pub fn run_uring() -> std::io::Result<()> {
     // conns whose response is produced but not yet sent: held until the inbound
     // journal is committed this iteration, so we never send before it's durable.
     let mut pending_writes: Vec<u32> = Vec::new();
-    static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
     let dir = PathBuf::from("data");
     std::fs::create_dir_all(&dir)?;
@@ -185,9 +184,12 @@ pub fn run_uring() -> std::io::Result<()> {
                 OP_ACCEPT => {
                     let fd = cqe.result();
                     if fd >= 0 {
+                        // identity (session_id
+                        // from the username, next_seq from the journal) is bound at
+                        // login. Nothing reads these until then.
                         let sess = Session {
                             username: [0u8; 6],
-                            session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+                            session_id: 0,
                             next_seq: 1,
                             map: HashMap::new(),
                         };
@@ -578,7 +580,11 @@ mod recovery_tests {
         {
             let mut j = Journal::open(&p).unwrap();
             for user_ref in 1..=3u32 {
-                journal_order(&mut j, session_id, &make_order_payload(user_ref, b'B', qty, price));
+                journal_order(
+                    &mut j,
+                    session_id,
+                    &make_order_payload(user_ref, b'B', qty, price),
+                );
             }
             j.commit().unwrap();
         } // drop = simulate a crash after commit
