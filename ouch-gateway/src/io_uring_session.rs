@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     net::TcpListener,
     os::fd::AsRawFd,
     path::{Path, PathBuf},
@@ -426,6 +427,20 @@ fn snap_shot_book(book: &OrderBook, at_seq: u64) -> std::io::Result<()> {
     std::fs::rename(&tmp_path, &final_path)?; // atomic on the same filesystem
 
     Ok(())
+}
+
+// Returns the seq the snapshot was taken at (0 if there is no snapshot),
+// seeding `book` from it. Mirror of snap_shot_book.
+fn load_snapshot(book: &mut OrderBook) -> std::io::Result<u64> {
+    let path = PathBuf::from("data").join("book.snapshot");
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0), // no snapshot yet
+        Err(e) => return Err(e),
+    };
+    let at_seq = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+    *book = OrderBook::deserialize(&bytes[8..]);
+    Ok(at_seq)
 }
 
 // Rebuild `book` from the inbound journa

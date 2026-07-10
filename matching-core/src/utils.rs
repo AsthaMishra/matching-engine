@@ -40,7 +40,6 @@ pub fn str_to_symbol(s: &str) -> [u8; 8] {
     buf
 }
 
-
 pub fn side_to_u8(s: Side) -> u8 {
     match s {
         Side::Buy => 0,
@@ -56,5 +55,25 @@ pub fn ordertype_to_u8(t: OrderType) -> u8 {
         OrderType::Market => 1,
         OrderType::IOC => 2,
         OrderType::FOK => 3,
+    }
+}
+
+pub fn u8_to_side(b: u8) -> Option<Side> {
+    match b {
+        0 => Some(Side::Buy),
+        1 => Some(Side::Sell),
+        2 => Some(Side::SellShort),
+        3 => Some(Side::SellShortExempt),
+        _ => None, // unknown byte = corrupt snapshot
+    }
+}
+
+pub fn u8_to_ordertype(b: u8) -> Option<OrderType> {
+    match b {
+        0 => Some(OrderType::Limit),
+        1 => Some(OrderType::Market),
+        2 => Some(OrderType::IOC),
+        3 => Some(OrderType::FOK),
+        _ => None, // unknown byte = corrupt snapshot
     }
 }

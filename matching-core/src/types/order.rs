@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::{ordertype_to_u8, side_to_u8};
+use crate::{ordertype_to_u8, side_to_u8, u8_to_ordertype, u8_to_side};
 
 #[derive(Clone)]
 pub struct Order {
@@ -61,6 +61,35 @@ impl Order {
         out.extend_from_slice(&(self.qty).to_be_bytes());
         out.extend_from_slice(&(self.remaining_qty).to_be_bytes());
         out.push(self.active as u8);
+    }
+
+    pub fn deserialize(buf: &[u8], p: &mut usize) -> Self {
+        let id = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap()) as usize;
+        *p += 8;
+        let trader_id = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap());
+        *p += 8;
+        let side = u8_to_side(buf[*p]).expect("corrupt side byte");
+        *p += 1;
+        let order_type = u8_to_ordertype(buf[*p]).expect("corrupt order_type byte");
+        *p += 1;
+        let price = i64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap());
+        *p += 8;
+        let qty = u32::from_be_bytes(buf[*p..*p + 4].try_into().unwrap());
+        *p += 4;
+        let r_qty = u32::from_be_bytes(buf[*p..*p + 4].try_into().unwrap());
+        *p += 4;
+        let active = buf[*p] != 0;
+        *p += 1;
+        Self {
+            id,
+            trader_id,
+            side,
+            order_type,
+            price,
+            qty,
+            remaining_qty: r_qty,
+            active,
+        }
     }
 }
 //B= BUY

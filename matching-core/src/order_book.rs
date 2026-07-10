@@ -36,6 +36,33 @@ impl PriceLevel {
         out.extend_from_slice(&(self.active_count as u64).to_be_bytes());
         out.extend_from_slice(&(self.head_idx as u64).to_be_bytes());
     }
+
+    pub fn deserialize(buf: &[u8], p: &mut usize) -> Self {
+        let price = i64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap());
+        *p += 8;
+        let t_qty = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap());
+        *p += 8;
+        let o_len = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap()) as usize;
+        *p += 8;
+
+        let mut orders = Vec::with_capacity(o_len);
+        for _ in 0..o_len {
+            orders.push(Order::deserialize(buf, p)); // reads one order, advances p
+        }
+
+        let active_count = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap()) as usize;
+        *p += 8;
+        let head_idx = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap()) as usize;
+        *p += 8;
+
+        Self {
+            price,
+            total_qty: t_qty,
+            orders,
+            active_count,
+            head_idx,
+        }
+    }
 }
 
 pub struct OrderBook {
@@ -117,6 +144,69 @@ impl OrderBook {
                 }
                 w &= w - 1;
             }
+        }
+    }
+
+    pub fn deserialize(buf: &[u8]) -> Self {
+        let mut p = 0;
+
+        let mut book = OrderBook::new();
+
+        book.next_id = u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()) as usize;
+        p += 8;
+
+        let free_ids_len = u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()) as usize;
+        p += 8;
+
+        for _ in 0..free_ids_len {
+            book.free_ids
+                .push(u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()) as usize);
+            p += 8;
+        }
+
+        let bid_levels = u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()) as usize;
+        p += 8;
+        for _ in 0..bid_levels {
+            let pl = PriceLevel::deserialize(buf, &mut p);
+            book.rebuild(Side::Buy, pl);
+        }
+
+        let ask_levels = u64::from_be_bytes(buf[p..p + 8].try_into().unwrap()) as usize;
+        p += 8;
+
+        for _ in 0..ask_levels {
+            let pl = PriceLevel::deserialize(buf, &mut p);
+            book.rebuild(Side::Sell, pl);
+        }
+
+        book
+    }
+
+    pub fn rebuild(&mut self, side: Side, pl: PriceLevel) {
+        let idx = price_to_idx(pl.price).expect("snapshot price out of range");
+
+        for (pos, o) in pl.orders.iter().enumerate() {
+            if o.active {
+                if o.id >= self.order_index.len() {
+                    self.order_index
+                        .resize((o.id + 1).next_power_of_two(), None);
+                }
+                self.order_index[o.id] = Some((side, pl.price, o.remaining_qty, pos));
+            }
+        }
+
+        match side {
+            Side::Buy => {
+                self.bid_bitmap[idx / 64] |= 1u64 << (idx % 64);
+                self.bid[idx] = Some(pl);
+                self.best_bid_idx = Some(self.best_bid_idx.map_or(idx, |b| b.max(idx)));
+            }
+            Side::Sell => {
+                self.ask_bitmap[idx / 64] |= 1u64 << (idx % 64);
+                self.ask[idx] = Some(pl);
+                self.best_ask_idx = Some(self.best_ask_idx.map_or(idx, |b| b.min(idx)));
+            }
+            _ => {}
         }
     }
 
@@ -551,8 +641,58 @@ impl OrderBook {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-    // use crate::types::{Order, OrderType, Side};
+    use super::*;
+    use crate::types::{Order, OrderType, Side};
+
+    #[test]
+    fn book_snapshot_roundtrips() {
+        use crate::types::{Order, OrderType, Side};
+
+        let mut b1 = OrderBook::with_capacity(1024);
+
+        let bid_price = 100i64;
+        let ask_price = 105i64;
+
+        // place one resting bid and one resting ask
+        let id1 = b1.allocate_id();
+        b1.place_order(Order::new(
+            id1,
+            1,
+            Side::Buy,
+            OrderType::Limit,
+            bid_price,
+            50,
+            50,
+        ))
+        .unwrap();
+        let id2 = b1.allocate_id();
+        b1.place_order(Order::new(
+            id2,
+            2,
+            Side::Sell,
+            OrderType::Limit,
+            ask_price,
+            30,
+            30,
+        ))
+        .unwrap();
+
+        // round-trip through the snapshot format
+        let mut bytes = Vec::new();
+        b1.serialize(&mut bytes);
+        let b2 = OrderBook::deserialize(&bytes);
+
+        assert_eq!(b1.best_bid(), b2.best_bid());
+        assert_eq!(b1.best_ask(), b2.best_ask());
+        assert_eq!(
+            b1.volume_at_price(Side::Buy, bid_price),
+            b2.volume_at_price(Side::Buy, bid_price)
+        );
+        assert_eq!(
+            b1.volume_at_price(Side::Sell, ask_price),
+            b2.volume_at_price(Side::Sell, ask_price)
+        );
+    }
 
     // fn make_bid(id: usize, trader_id: u64, price: i64, qty: u64) -> Order {
     //     Order::new(
