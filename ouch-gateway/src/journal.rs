@@ -9,7 +9,7 @@
 use crc32fast::Hasher;
 use std::{
     fs::{File, OpenOptions},
-    io::{ErrorKind, Read, Result, Write},
+    io::{ErrorKind, Read, Result, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -68,44 +68,9 @@ impl Journal {
             .append(true)
             .open(path)?;
 
-        let mut rec_req = 0;
-
-        loop {
-            let mut len_buff: [u8; 4] = [0u8; 4];
-            if let Err(e) = file.read_exact(&mut len_buff) {
-                if e.kind() == ErrorKind::UnexpectedEof {
-                    break;
-                }
-
-                return Err(e);
-            };
-            let len = u32::from_be_bytes(len_buff);
-
-            let mut record: Vec<u8> = vec![0u8; len as usize];
-            if let Err(e) = file.read_exact(&mut record) {
-                if e.kind() == ErrorKind::UnexpectedEof {
-                    break;
-                }
-
-                return Err(e);
-            };
-
-            let seq: u64 = u64::from_be_bytes(record[0..8].try_into().unwrap());
-            let crc: u32 = u32::from_be_bytes(record[8..12].try_into().unwrap());
-            let ty: u8 = record[12];
-            let payload = &record[13..];
-
-            let mut verify_crc = Hasher::new();
-            verify_crc.update(&seq.to_be_bytes());
-            verify_crc.update(&ty.to_be_bytes());
-            verify_crc.update(payload);
-
-            if verify_crc.finalize() != crc {
-                break;
-            }
-
-            rec_req = seq;
-        }
+        // Scan the existing file to recover the last durable sequence number.
+        // We don't need the record contents here, so the callback is a no-op.
+        let rec_req = Self::scan(&mut file, |_ty, _payload| {})?;
 
         Ok(Self {
             file,
@@ -113,6 +78,68 @@ impl Journal {
             next_seq: rec_req + 1,
             durable_seq: rec_req,
         })
+    }
+
+    /// Replay every committed record from the start of the file, invoking
+    /// `on_record(ty, payload)` for each. Used at startup to rebuild in-memory
+    /// state (e.g. the order book) from the journal. Stops cleanly at EOF or the
+    /// first torn/corrupt record -> identical semantics to recovery in `open`.
+    pub fn replay(&mut self, on_record: impl FnMut(u8, &[u8])) -> Result<()> {
+        self.file.seek(SeekFrom::Start(0))?;
+        Self::scan(&mut self.file, on_record)?;
+        Ok(())
+    }
+
+    /// Read records sequentially from `file`'s current position, calling
+    /// `on_record(ty, payload)` for each valid one. Returns the highest sequence
+    /// number seen (0 if none). Stops at EOF, an impossibly short record, or the
+    /// first record whose crc fails -> that's the crash point; everything after
+    /// it is discarded.
+    fn scan(file: &mut File, mut on_record: impl FnMut(u8, &[u8])) -> Result<u64> {
+        let mut last_seq = 0u64;
+
+        loop {
+            let mut len_buff = [0u8; 4];
+            if let Err(e) = file.read_exact(&mut len_buff) {
+                if e.kind() == ErrorKind::UnexpectedEof {
+                    break; // clean end of file
+                }
+                return Err(e);
+            }
+            let len = u32::from_be_bytes(len_buff) as usize;
+
+            // Minimum valid record = seq(8) + crc(4) + ty(1). A smaller len means
+            // a torn/corrupt header -> stop before we index out of bounds below.
+            if len < 13 {
+                break;
+            }
+
+            let mut record = vec![0u8; len];
+            if let Err(e) = file.read_exact(&mut record) {
+                if e.kind() == ErrorKind::UnexpectedEof {
+                    break; // torn tail: header promised more than was written
+                }
+                return Err(e);
+            }
+
+            let seq = u64::from_be_bytes(record[0..8].try_into().unwrap());
+            let crc = u32::from_be_bytes(record[8..12].try_into().unwrap());
+            let ty = record[12];
+            let payload = &record[13..];
+
+            let mut verify_crc = Hasher::new();
+            verify_crc.update(&seq.to_be_bytes());
+            verify_crc.update(&ty.to_be_bytes());
+            verify_crc.update(payload);
+            if verify_crc.finalize() != crc {
+                break; // corruption: stop at the crash point
+            }
+
+            on_record(ty, payload);
+            last_seq = seq;
+        }
+
+        Ok(last_seq)
     }
 }
 
