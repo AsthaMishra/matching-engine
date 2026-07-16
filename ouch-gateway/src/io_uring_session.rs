@@ -317,6 +317,17 @@ pub fn run_uring() -> std::io::Result<()> {
                                             &mut out,
                                             &mut ev_buf,
                                         );
+                                        // M4a: journal the outbound OUCH stream to
+                                        // this session's out_journal, one record per
+                                        // message (= one SoupBin sequence number), so
+                                        // it can be resent on reconnect (M5). Committed
+                                        // before the response is flushed (end of the
+                                        // iteration) so we never ack an unrecoverable
+                                        // message.
+                                        if let Some(out_j) = conn.out_journal.as_mut() {
+                                            journal_outbound(out_j, &out);
+                                            conn.sess.next_seq = out_j.next_seq();
+                                        }
                                         conn.resp.extend_from_slice(&out);
                                         #[cfg(feature = "metrics")]
                                         svc.saturating_record(eng_ns);
@@ -394,6 +405,12 @@ pub fn run_uring() -> std::io::Result<()> {
         // Every journaled command is now durable → flush the held responses.
         for conn_id in pending_writes.drain(..) {
             if let Some(Some(conn)) = conns.get_mut(conn_id as usize) {
+                // The outbound messages must be durable before we send them, or a
+                // reconnecting client could ask us to resend a seq we never wrote.
+                // No-op when nothing was appended this iteration (empty pending).
+                if let Some(out_j) = conn.out_journal.as_mut() {
+                    out_j.commit()?;
+                }
                 arm_write(&mut sq, conn, conn_id);
             }
         }
@@ -474,6 +491,49 @@ fn recover_book(inbound: &mut Journal, book: &mut OrderBook) -> std::io::Result<
 
 fn path_for(session_id: u64) -> PathBuf {
     Path::new(JOURNAL_DIR).join(format!("{session_id}.log"))
+}
+
+fn ouch_out_len(ty: u8) -> Option<usize> {
+    Some(match ty {
+        b'S' => 10, // System Event
+        b'A' => 64, // Order Accepted
+        b'U' => 68, // Order Replaced
+        b'C' => 20, // Order Canceled
+        b'D' => 34, // AIQ Canceled
+        b'E' => 36, // Order Executed
+        b'B' => 38, // Broken Trade
+        b'J' => 31, // Rejected
+        b'P' => 15, // Cancel Pending
+        b'I' => 15, // Cancel Reject
+        b'T' => 32, // Order Priority Update
+        b'M' => 20, // Order Modified
+        b'R' => 16, // Order Restated
+        b'X' => 27, // Mass Cancel Response
+        b'G' => 19, // Disable Order Entry Response
+        b'K' => 19, // Enable Order Entry Response
+        b'Q' => 15, // Account Query Response
+        _ => return None,
+    })
+}
+
+fn journal_outbound(out_j: &mut Journal, out: &[u8]) {
+    let mut i = 0;
+    while i < out.len() {
+        match ouch_out_len(out[i]) {
+            Some(len) if i + len <= out.len() => {
+                out_j.append(out[i], &out[i..i + len]);
+                i += len;
+            }
+            _ => {
+                tracing::warn!(
+                    ty = out[i],
+                    "unrecognized outbound message; journaling remainder"
+                );
+                out_j.append(b'?', &out[i..]);
+                break;
+            }
+        }
+    }
 }
 
 fn parse_username(username: &[u8; 6]) -> Option<u64> {
@@ -699,6 +759,32 @@ mod recovery_tests {
             book.volume_at_price(Side::Buy, price as i64),
             Some(2 * qty as u64)
         );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // M4a: a gateway response blob (Order Accepted + Order Executed) is journaled
+    // as two separate records one SoupBin sequence number each  and replays
+    // back in order with the right types and lengths.
+    #[test]
+    fn outbound_journal_splits_per_message() {
+        use super::journal_outbound;
+        let p = tmp_path();
+        {
+            let mut j = Journal::open(&p).unwrap();
+            let mut out = Vec::new();
+            out.push(b'A');
+            out.extend_from_slice(&[0u8; 63]); // Order Accepted = 64 bytes
+            out.push(b'E');
+            out.extend_from_slice(&[0u8; 35]); // Order Executed = 36 bytes
+            journal_outbound(&mut j, &out);
+            assert_eq!(j.next_seq(), 3); // two records appended: seq 1 and 2
+            j.commit().unwrap();
+        }
+        let mut j2 = Journal::open(&p).unwrap();
+        let mut seen = Vec::new();
+        j2.replay_from(0, |ty, payload| seen.push((ty, payload.len())))
+            .unwrap();
+        assert_eq!(seen, vec![(b'A', 64), (b'E', 36)]);
         let _ = std::fs::remove_file(&p);
     }
 }
