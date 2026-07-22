@@ -6,6 +6,7 @@ use crate::{ordertype_to_u8, side_to_u8, u8_to_ordertype, u8_to_side};
 pub struct Order {
     pub id: usize,
     pub trader_id: u64,
+    pub user_ref: u32,
     pub side: Side,
     pub order_type: OrderType,
     pub price: i64,
@@ -19,6 +20,7 @@ impl Default for Order {
         Self {
             id: 0,
             trader_id: 0,
+            user_ref: 0,
             side: Side::Buy,
             order_type: OrderType::Limit,
             price: 0,
@@ -43,6 +45,7 @@ impl Order {
         Self {
             id,
             trader_id,
+            user_ref: 0,
             side,
             order_type,
             price,
@@ -55,6 +58,7 @@ impl Order {
     pub fn serialize(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&(self.id as u64).to_be_bytes());
         out.extend_from_slice(&self.trader_id.to_be_bytes());
+        out.extend_from_slice(&self.user_ref.to_be_bytes());
         out.push(side_to_u8(self.side));
         out.push(ordertype_to_u8(self.order_type));
         out.extend_from_slice(&(self.price).to_be_bytes());
@@ -68,6 +72,8 @@ impl Order {
         *p += 8;
         let trader_id = u64::from_be_bytes(buf[*p..*p + 8].try_into().unwrap());
         *p += 8;
+        let user_ref = u32::from_be_bytes(buf[*p..*p + 4].try_into().unwrap());
+        *p += 4;
         let side = u8_to_side(buf[*p]).expect("corrupt side byte");
         *p += 1;
         let order_type = u8_to_ordertype(buf[*p]).expect("corrupt order_type byte");
@@ -83,6 +89,7 @@ impl Order {
         Self {
             id,
             trader_id,
+            user_ref,
             side,
             order_type,
             price,

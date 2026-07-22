@@ -39,7 +39,7 @@ pub fn read(
                 _ => OrderType::Limit,
             };
 
-            let order = Order::new(
+            let mut order = Order::new(
                 book.allocate_id(),
                 sess.session_id,
                 s,
@@ -49,6 +49,7 @@ pub fn read(
                 a_o.qty,
                 // now_nanos(),
             );
+            order.user_ref = a_o.user_ref_num;
 
             #[cfg(feature = "metrics")]
             let eng_t = std::time::Instant::now();

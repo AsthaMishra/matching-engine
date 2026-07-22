@@ -92,6 +92,8 @@ pub fn match_order_into(
 
                     let fill_qty = incoming.remaining_qty.min(o.remaining_qty);
                     let maker_order_id = o.id;
+                    let maker_trader_id = o.trader_id;
+                    let maker_user_ref = o.user_ref;
 
                     incoming.remaining_qty -= fill_qty;
                     o.remaining_qty -= fill_qty;
@@ -107,6 +109,8 @@ pub fn match_order_into(
                     out.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
+                        maker_trader_id,
+                        maker_user_ref,
                         taker_order_id: incoming.id,
                         price: pl.price,
                         qty: fill_qty as u64,
@@ -197,6 +201,8 @@ pub fn match_order_into(
                     }
 
                     let maker_order_id = o.id;
+                    let maker_trader_id = o.trader_id;
+                    let maker_user_ref = o.user_ref;
                     let fill_qty = incoming.remaining_qty.min(o.remaining_qty);
                     incoming.remaining_qty -= fill_qty;
                     o.remaining_qty -= fill_qty;
@@ -212,6 +218,8 @@ pub fn match_order_into(
                     out.push(OrderEvent::Executed(Trade {
                         id: next_trade_id(),
                         maker_order_id,
+                        maker_trader_id,
+                        maker_user_ref,
                         taker_order_id: incoming.id,
                         price: pl.price,
                         qty: fill_qty as u64,
@@ -381,8 +389,12 @@ pub fn replace_order(
 
     // Read actual remaining_qty from the price level - order_index stores the
     // original qty and is never updated on partial fills, so old_qty is stale.
-    let (trader_id, order_type, actual_remaining) =
-        (order.trader_id, order.order_type, order.remaining_qty);
+    let (trader_id, user_ref, order_type, actual_remaining) = (
+        order.trader_id,
+        order.user_ref,
+        order.order_type,
+        order.remaining_qty,
+    );
 
     if new_qty == 0 {
         let res = book.cancel_order(order_id)?;
@@ -428,10 +440,12 @@ pub fn replace_order(
     }
 
     book.cancel_order(order_id)?;
-    let new_order = Order::new(
+    let mut new_order = Order::new(
         order_id, trader_id, side, order_type, new_price, new_qty, new_qty,
         // now_nanos(),
     );
+
+    new_order.user_ref = user_ref;
 
     let trades = match_order(book, new_order, CommandType::Replace);
     Ok(trades)

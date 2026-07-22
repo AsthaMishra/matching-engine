@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     io::ErrorKind,
     net::TcpListener,
     os::fd::AsRawFd,
@@ -47,7 +47,10 @@ struct Conn {
     logged_in: bool,
     close_after_flush: bool,
 
-    out_journal: Option<Journal>,
+    // NOTE: the session's outbound journal is deliberately NOT held here. It is
+    // keyed by session_id in `journals` (owned by run_uring) because it must
+    // outlive any single connection: a resting order keeps earning fills after its
+    // owner disconnects, and those fills still have to be journaled for resend.
     // set when a write is submitted, consumed on its completion → write latency
     #[cfg(feature = "metrics")]
     write_t0: Option<Instant>,
@@ -65,7 +68,6 @@ impl Conn {
             close_after_flush: false,
             #[cfg(feature = "metrics")]
             write_t0: None,
-            out_journal: None,
         }
     }
 }
@@ -131,6 +133,17 @@ pub fn run_uring() -> std::io::Result<()> {
     // conns whose response is produced but not yet sent: held until the inbound
     // journal is committed this iteration, so we never send before it's durable.
     let mut pending_writes: Vec<u32> = Vec::new();
+
+    // Per-session outbound journals
+    let mut journals: HashMap<u64, Journal> = HashMap::new(); // session_id -> Journal
+
+    // Which sessions were appended to this iteration → committed (one fsync each)
+    // before any response goes out. Duplicates are harmless: commit() no-ops when
+    // there's nothing pending.
+    let mut dirty_journals: Vec<u64> = Vec::new();
+
+    // Who is connected right now
+    let mut live: HashMap<u64, u32> = HashMap::new(); // session_id → conn_id
 
     let dir = PathBuf::from("data");
     std::fs::create_dir_all(&dir)?;
@@ -235,7 +248,7 @@ pub fn run_uring() -> std::io::Result<()> {
                             let n = cqe.result();
 
                             if n <= 0 {
-                                close_conn(&mut conns, &mut sq, conn_id);
+                                close_conn(&mut conns, &mut live, &mut sq, conn_id);
                                 continue;
                             }
 
@@ -268,25 +281,33 @@ pub fn run_uring() -> std::io::Result<()> {
                                             break; // stop parsing further frames from this buffer
                                         };
 
-                                        let journal = match Journal::open(&path_for(session_id)) {
-                                            Ok(j) => j,
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    session_id,
-                                                    ?e,
-                                                    "failed to open session journal"
-                                                );
-                                                push_login_reject(&mut conn.resp, b'S'); // Session not available
-                                                conn.close_after_flush = true;
-                                                break;
+                                        // Reuse this session's journal if it's already
+                                        // open (reconnect); otherwise open it once.
+                                        let out_j = match journals.entry(session_id) {
+                                            Entry::Occupied(e) => e.into_mut(),
+                                            Entry::Vacant(e) => {
+                                                match Journal::open(&path_for(session_id)) {
+                                                    Ok(j) => e.insert(j),
+                                                    Err(err) => {
+                                                        tracing::warn!(
+                                                            session_id,
+                                                            ?err,
+                                                            "failed to open session journal"
+                                                        );
+                                                        push_login_reject(&mut conn.resp, b'S'); // Session not available
+                                                        conn.close_after_flush = true;
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         };
 
                                         conn.sess.username = username;
                                         conn.sess.session_id = session_id;
-                                        conn.sess.next_seq = journal.next_seq(); // ← recovered seq, read from the journal
-                                        conn.out_journal = Some(journal); // ← keep it open for appends
+                                        conn.sess.next_seq = out_j.next_seq(); // ← recovered seq, read from the journal
                                         conn.logged_in = true;
+                                        // this session is now reachable at this slot
+                                        live.insert(session_id, conn_id);
 
                                         push_login_accept(&mut conn.resp, session_id);
                                     }
@@ -317,16 +338,12 @@ pub fn run_uring() -> std::io::Result<()> {
                                             &mut out,
                                             &mut ev_buf,
                                         );
-                                        // M4a: journal the outbound OUCH stream to
-                                        // this session's out_journal, one record per
-                                        // message (= one SoupBin sequence number), so
-                                        // it can be resent on reconnect (M5). Committed
-                                        // before the response is flushed (end of the
-                                        // iteration) so we never ack an unrecoverable
-                                        // message.
-                                        if let Some(out_j) = conn.out_journal.as_mut() {
+
+                                        if let Some(out_j) = journals.get_mut(&conn.sess.session_id)
+                                        {
                                             journal_outbound(out_j, &out);
                                             conn.sess.next_seq = out_j.next_seq();
+                                            dirty_journals.push(conn.sess.session_id);
                                         }
                                         conn.resp.extend_from_slice(&out);
                                         #[cfg(feature = "metrics")]
@@ -347,7 +364,7 @@ pub fn run_uring() -> std::io::Result<()> {
 
                             if conn.resp.is_empty() {
                                 if conn.close_after_flush {
-                                    close_conn(&mut conns, &mut sq, conn_id); // reject sent, now drop the socket
+                                    close_conn(&mut conns, &mut live, &mut sq, conn_id); // reject sent, now drop the socket
                                 } else {
                                     arm_read(&mut sq, conn, conn_id);
                                 }
@@ -362,7 +379,7 @@ pub fn run_uring() -> std::io::Result<()> {
                             let n = cqe.result();
 
                             if n < 0 {
-                                close_conn(&mut conns, &mut sq, conn_id);
+                                close_conn(&mut conns, &mut live, &mut sq, conn_id);
                                 continue;
                             }
 
@@ -382,7 +399,7 @@ pub fn run_uring() -> std::io::Result<()> {
                             if conn.resp.is_empty() {
                                 // fully sent → now safe to read the next request
                                 if conn.close_after_flush {
-                                    close_conn(&mut conns, &mut sq, conn_id); // reject sent, now drop the socket
+                                    close_conn(&mut conns, &mut live, &mut sq, conn_id); // reject sent, now drop the socket
                                 } else {
                                     arm_read(&mut sq, conn, conn_id);
                                 }
@@ -402,15 +419,18 @@ pub fn run_uring() -> std::io::Result<()> {
         // batch; the io_uring async-fsync optimization comes later.
         inbound.commit()?;
 
+        // Outbound messages must be durable before they're sent, or a reconnecting
+        // client could ask us to resend a seq we never wrote. This covers offline
+        // makers too and their fills are journaled with no response to flush.
+        for sid in dirty_journals.drain(..) {
+            if let Some(out_j) = journals.get_mut(&sid) {
+                out_j.commit()?;
+            }
+        }
+
         // Every journaled command is now durable → flush the held responses.
         for conn_id in pending_writes.drain(..) {
             if let Some(Some(conn)) = conns.get_mut(conn_id as usize) {
-                // The outbound messages must be durable before we send them, or a
-                // reconnecting client could ask us to resend a seq we never wrote.
-                // No-op when nothing was appended this iteration (empty pending).
-                if let Some(out_j) = conn.out_journal.as_mut() {
-                    out_j.commit()?;
-                }
                 arm_write(&mut sq, conn, conn_id);
             }
         }
@@ -579,8 +599,26 @@ fn alloc_slot(conns: &mut Vec<Option<Conn>>, conn: Conn) -> u32 {
     }
 }
 
-fn close_conn(conns: &mut Vec<Option<Conn>>, sq: &mut SubmissionQueue, conn_id: u32) {
+// Drops the connection and, crucially, de-registers the session from `live`.
+// The slot is recycled by alloc_slot, so leaving a stale session_id → conn_id
+// entry here would route the old session's fills to whoever lands in the slot
+// next. The session's journal is intentionally NOT dropped: its orders may still
+// be resting and earning fills.
+fn close_conn(
+    conns: &mut Vec<Option<Conn>>,
+    live: &mut HashMap<u64, u32>,
+    sq: &mut SubmissionQueue,
+    conn_id: u32,
+) {
     if let Some(conn) = conns[conn_id as usize].take() {
+        // Only clear the directory if it still points at THE slot. A reconnect
+        // may have already re-pointed the session at a newer conn_id, and this
+        // (late) close of the old socket must not unregister the new one.
+        if let Some(&cid) = live.get(&conn.sess.session_id) {
+            if cid == conn_id {
+                live.remove(&conn.sess.session_id);
+            }
+        }
         // frees the slot + drops buffers
         let sqe = opcode::Close::new(Fd(conn.fd)).build().user_data(OP_CLOSE);
         unsafe {
