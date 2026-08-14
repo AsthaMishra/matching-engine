@@ -103,7 +103,7 @@ pub fn run_worker(
             let idx = op.index();
             match op.recv(&slots[idx].rx) {
                 Ok(BookRequest::EndOfDay) => {
-                    slots[idx].book.reset_for_eod();
+                    slots[idx].book.reset();
                 }
                 Ok(req) => {
                     dispatch(req, &mut slots[idx].book, &response_txs);

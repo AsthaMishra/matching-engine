@@ -23,6 +23,15 @@ fn make_order(
 // IDs are assigned via book.allocate_id() — sequential from 0, dense Vec indexing.
 fn build_book(depth: usize) -> OrderBook {
     let mut book = OrderBook::new();
+    seed_book(&mut book, depth);
+    book
+}
+
+// Seed `depth` levels per side into an existing book. Split out of build_book so
+// benchmarks can reuse one allocation across iterations: reset() + seed_book()
+// returns the book to a known state without re-allocating the ~9.6 MB of price
+// arrays, which otherwise dominates (and destabilises) the measured window.
+fn seed_book(book: &mut OrderBook, depth: usize) {
     for i in 0..depth {
         let bid_price = 5000 - (i as i64 + 1);
         let ask_price = 5000 + (i as i64 + 1);
@@ -49,7 +58,6 @@ fn build_book(depth: usize) -> OrderBook {
         ))
         .unwrap();
     }
-    book
 }
 
 // ── Add order (no match) ──────────────────────────────────────────────────────
@@ -194,11 +202,16 @@ fn bench_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
     // 200 ops timed per iter → throughput = 200 / elapsed.
     group.throughput(Throughput::Elements(200));
+    // One book for the whole benchmark; reset() between iterations restores the
+    // pristine state without touching the allocator. Previously this allocated
+    // and freed a ~9.6 MB book per iteration around a ~10 µs measured window,
+    // which put mmap/munmap and page-fault cost in the same order as the signal.
     group.bench_function("insert_no_match", |b| {
+        let mut book = OrderBook::new();
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
-                let mut book = OrderBook::new();
+                book.reset(); // untimed: back to an empty book, allocations retained
                 let t = Instant::now();
                 for price in 1i64..=200 {
                     let id = book.allocate_id();
@@ -209,7 +222,6 @@ fn bench_throughput(c: &mut Criterion) {
                     ));
                 }
                 total += t.elapsed();
-                drop(book);
             }
             total
         });
@@ -219,12 +231,14 @@ fn bench_throughput(c: &mut Criterion) {
     // This is the steady-state case: level already exists, just pl.orders.push() + index update.
     group.throughput(Throughput::Elements(200));
     group.bench_function("insert_warm", |b| {
+        let mut book = OrderBook::new();
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
-                // build_book depth=100: bids at 4999..4900, asks at 5001..5100
-
-                let mut book = build_book(100);
+                // depth=100: bids at 4999..4900, asks at 5001..5100. Reset + reseed
+                // is untimed, so each iteration starts from an identical book.
+                book.reset();
+                seed_book(&mut book, 100);
                 let t = Instant::now();
                 // Insert into existing bid levels — price < best_ask so no match, order rests
                 for i in 0..200usize {
@@ -237,7 +251,6 @@ fn bench_throughput(c: &mut Criterion) {
                     ));
                 }
                 total += t.elapsed();
-                drop(book);
             }
             total
         });
@@ -246,10 +259,11 @@ fn bench_throughput(c: &mut Criterion) {
     // 200 maker+taker pairs per outer iter, 400 total orders timed.
     group.throughput(Throughput::Elements(400));
     group.bench_function("add_then_match", |b| {
+        let mut book = OrderBook::new();
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
             for _ in 0..iters {
-                let mut book = OrderBook::new();
+                book.reset(); // untimed
                 let t = Instant::now();
                 for _ in 0..200 {
                     let maker_id = book.allocate_id();
@@ -266,7 +280,6 @@ fn bench_throughput(c: &mut Criterion) {
                     ));
                 }
                 total += t.elapsed();
-                drop(book);
             }
             total
         });

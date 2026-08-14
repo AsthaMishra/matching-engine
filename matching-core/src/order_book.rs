@@ -370,7 +370,8 @@ impl OrderBook {
         None
     }
 
-    pub fn reset_for_eod(&mut self) {
+    //complete reset
+    pub fn reset(&mut self) {
         // clear active bid levels via bitmap
         for word_idx in 0..self.bid_bitmap.len() {
             let mut w = self.bid_bitmap[word_idx];
@@ -396,7 +397,9 @@ impl OrderBook {
         }
         self.best_bid_idx = None;
         self.best_ask_idx = None;
-        // caller calls arena.reset() after this
+
+        self.next_id = 0;
+        self.free_ids.clear();
     }
 
     //returning price -> aggregated qty
