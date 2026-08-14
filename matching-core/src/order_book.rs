@@ -375,6 +375,9 @@ impl OrderBook {
         // clear active bid levels via bitmap
         for word_idx in 0..self.bid_bitmap.len() {
             let mut w = self.bid_bitmap[word_idx];
+            if w == 0 {
+                continue;
+            }
             while w != 0 {
                 let bit = w.trailing_zeros() as usize;
                 self.bid[word_idx * 64 + bit] = None;
@@ -385,6 +388,9 @@ impl OrderBook {
         // clear active ask levels via bitmap
         for word_idx in 0..self.ask_bitmap.len() {
             let mut w = self.ask_bitmap[word_idx];
+            if w == 0 {
+                continue;
+            }
             while w != 0 {
                 let bit = w.trailing_zeros() as usize;
                 self.ask[word_idx * 64 + bit] = None;
@@ -392,7 +398,9 @@ impl OrderBook {
             }
             self.ask_bitmap[word_idx] = 0;
         }
-        for slot in &mut self.order_index {
+
+        let max_len = self.next_id.min(self.order_index.len());
+        for slot in &mut self.order_index[..max_len] {
             *slot = None;
         }
         self.best_bid_idx = None;

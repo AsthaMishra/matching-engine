@@ -67,17 +67,18 @@ fn bench_add_limit_no_match(c: &mut Criterion) {
 
     for depth in [10, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, &depth| {
+            let mut book = OrderBook::new();
             b.iter_custom(|iters| {
                 let mut total = std::time::Duration::ZERO;
                 for _ in 0..iters {
-                    let mut book = build_book(depth);
+                    book.reset(); // untimed: reuses the allocation, rewinds ids
+                    seed_book(&mut book, depth);
                     // A bid well below the ask — won't match anything
                     let id = book.allocate_id();
                     let order = make_order(id, 2, Side::Buy, OrderType::Limit, 50, 10);
                     let t = Instant::now();
                     let _ = match_order(&mut book, order, CommandType::Add);
                     total += t.elapsed();
-                    drop(book);
                 }
                 total
             });
@@ -93,10 +94,12 @@ fn bench_add_limit_full_match(c: &mut Criterion) {
 
     for depth in [10, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, &depth| {
+            let mut book = OrderBook::new();
             b.iter_custom(|iters| {
                 let mut total = std::time::Duration::ZERO;
                 for _ in 0..iters {
-                    let mut book = build_book(depth);
+                    book.reset(); // untimed
+                    seed_book(&mut book, depth);
 
                     // Aggressive bid at 5001 — matches best ask immediately
                     let id = book.allocate_id();
@@ -104,7 +107,6 @@ fn bench_add_limit_full_match(c: &mut Criterion) {
                     let t = Instant::now();
                     let _ = match_order(&mut book, order, CommandType::Add);
                     total += t.elapsed();
-                    drop(book);
                 }
                 total
             });
@@ -124,18 +126,19 @@ fn bench_market_order_sweep(c: &mut Criterion) {
             BenchmarkId::from_parameter(levels_to_sweep),
             &levels_to_sweep,
             |b, &levels| {
+                let mut book = OrderBook::new();
                 b.iter_custom(|iters| {
                     let mut total = std::time::Duration::ZERO;
                     for _ in 0..iters {
-                        let mut book = build_book(50);
+                        book.reset(); // untimed
+                        seed_book(&mut book, 50);
                         // 10 qty per level × levels → sweeps exactly `levels` price levels
-                        let qty = (levels * 10);
+                        let qty = levels * 10;
                         let id = book.allocate_id();
                         let order = make_order(id, 2, Side::Buy, OrderType::Market, 0, qty as u32);
                         let t = Instant::now();
                         let _ = match_order(&mut book, order, CommandType::Add);
                         total += t.elapsed();
-                        drop(book);
                     }
                     total
                 });
@@ -152,15 +155,19 @@ fn bench_cancel(c: &mut Criterion) {
 
     for depth in [10, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, &depth| {
+            let mut book = OrderBook::new();
             b.iter_custom(|iters| {
                 let mut total = std::time::Duration::ZERO;
                 for _ in 0..iters {
-                    let mut book = build_book(depth);
+                    // reset() rewinds the id counter, so the first bid seeded below
+                    // is id 0 again on every iteration - without that rewind this
+                    // benchmark would cancel a non-existent order after iteration 1.
+                    book.reset();
+                    seed_book(&mut book, depth);
                     // ID 0 is always the first bid placed (allocate_id starts at 0)
                     let t = Instant::now();
                     let _ = book.cancel_order(0);
                     total += t.elapsed();
-                    drop(book);
                 }
                 total
             });
