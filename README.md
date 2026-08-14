@@ -47,13 +47,17 @@ Three different things are measured three different ways. **Don't compare them t
 
 | Measurement | What it covers | Excludes | How it's measured | Result |
 |---|---|---|---|---|
-| **Order book op** | A single book operation in isolation | Network, protocol, threading, syscalls | Criterion (synthetic), warm cache, in-process | p50 **~101 ns** top-of-book match · ~40M warm inserts/s |
-| **ITCH replay** | Book reacting to a real trading day | Same as above (book only) | `Instant` around each op, 104M ops / 100 symbols | p50 **100 ns**, p99 501 ns (book management; 96% deletes, 0 trades) |
-| **Order-to-ack** | OUCH Enter → Accept, codec + TCP included | - | Server software timestamps + `hdrhistogram`, **loopback**, single session, order rests | median **~13 µs** service / **~33 µs** client RTT |
+| **Order book op** | A single book operation in isolation | Network, protocol, threading, syscalls | Criterion (synthetic), warm cache, in-process, book allocated outside the timer | **51 ns** top-of-book match · **58 ns** cancel at depth-1000 · **0.90 ns** BBO · ~30M warm inserts/s |
+| **ITCH replay** | Book reacting to a real trading day | Same as above (book only) | `Instant` around each op, 104.6M ops / top-100 symbols | p50 **99 ns**, p99 502 ns, **~5.9M ops/s** (book management; 96% deletes, 0 trades) |
+| **Matching path** | Large marketable orders sweeping a deep book | Same as above (book only) | `Instant` per op, 1M synthetic ops, 731k executions | sweep of ~143 fills in **2.0 µs** (~14 ns/fill) |
+| **Order-to-ack** | OUCH Enter → Accept, codec + TCP included | - | Client `hdrhistogram`, **loopback**, single session, 1M orders | p50 **10.4 µs** · p99 **19.6 µs** · pipelined **2.0M orders/s** |
 
 Caveats, stated plainly:
 - The order-to-ack number is **localhost loopback with software timestamps** - not external/hardware wire-to-wire. A real NIC + switch path would add latency; this is the floor, not a production figure.
-- ITCH Add messages are passive resting quotes (0 trades), so the replay measures **book management** (insert/cancel/modify), not matching throughput. Matching is measured separately via the synthetic Criterion benches.
+- The load generator is **closed-loop** (one order in flight, blocking on each ack), so those are service-time percentiles and the tail is understated by construction. Not offered-load percentiles.
+- ITCH Add messages are passive resting quotes (0 trades), so the replay measures **book management** (insert/cancel/modify), not matching throughput. Matching is measured separately by `synthetic_replay` and the Criterion benches.
+- Order-book microbenchmarks allocate the book **outside** the measured window. Earlier revisions did not, which inflated every figure 4–15× and made runs vary by up to 2.4×; see [benchmark methodology](matching-core/README.md#benchmark-methodology).
+- `Instant` resolution here is ~100 ns, so per-op percentile tables are quantised at that granularity. The BBO figure is the only genuinely sub-nanosecond measurement, and it comes from Criterion's sampling rather than wall-clock timing.
 - Everything runs on **x86-64 WSL2**, whose VM scheduler injects 100 µs–ms pauses; the p99.9/max tail is partly environmental, not code.
 
 > A matching engine lives exchange-side; the point of this project is the data-structure and systems work, not a claim of HFT-grade end-to-end latency.

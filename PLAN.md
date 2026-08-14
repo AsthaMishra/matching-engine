@@ -18,10 +18,15 @@ load client. Server registers `AAPL` at startup.
 
 **✅ Latency phase — done (2026-07-02):** single-threaded run-to-completion **io_uring** datapath
 (`io_uring_session.rs`, replaces the worker+channel path for OUCH) solved the `svc` tail;
-**SQPOLL** on both server and client (`load_client_io_uring`) cut wire-to-wire RTT to **~9.75 µs**
-(from ~38 µs blocking); pipelined client (`load_client_pipeline`) sustains **~1.74 M orders/sec**;
+**SQPOLL** on both server and client (`load_client_io_uring`) cut order-to-ack RTT to
+**p50 10.4 µs / p99 19.6 µs** (from 21.3 µs with a blocking client against the same server);
+pipelined client (`load_client_pipeline`) sustains **~2.0 M orders/sec**;
 hot-path timers gated behind the off-by-default **`metrics`** feature. Details in
 [`doc/progress.md`](doc/progress.md). Remaining latency lever: bare-metal Linux run (§4).
+
+Figures re-measured 2026-08-14 with percentiles; the earlier ~9.75 µs / ~1.74 M/s pair
+was p50-only and predates the gateway allocation work. The "~38 µs blocking baseline"
+is retired — it required a non-SQPOLL server path the tree no longer contains.
 
 ---
 
